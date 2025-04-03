@@ -14,6 +14,19 @@ python app.py
 
 サーバーはデフォルトで `http://localhost:5000` で起動します。
 
+### 注意: 依存関係の互換性
+
+このプロジェクトでは、特定のバージョンのパッケージが必要です：
+- Flask 2.0.1
+- Werkzeug 2.0.3
+
+これらのバージョン指定は、互換性の問題を回避するために重要です。エラー「ImportError: cannot import name 'url_quote'」が発生した場合、以下のコマンドで解決できます：
+
+```bash
+pip uninstall flask werkzeug
+pip install flask==2.0.1 werkzeug==2.0.3
+```
+
 ## APIエンドポイント
 
 ### ISOファイル一覧の取得

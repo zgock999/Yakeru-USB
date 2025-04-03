@@ -32,7 +32,12 @@ namespace YakeruUSB
             {
                 if (_instance == null)
                 {
+                    #if UNITY_2022_3_OR_NEWER
+                    _instance = FindAnyObjectByType<WebSocketClient>();
+                    #else
                     _instance = FindObjectOfType<WebSocketClient>();
+                    #endif
+                    
                     if (_instance == null)
                     {
                         GameObject go = new GameObject("WebSocketClient");
@@ -59,9 +64,24 @@ namespace YakeruUSB
             DontDestroyOnLoad(gameObject);
         }
 
+        private void OnApplicationQuit()
+        {
+            // アプリケーション終了時にシングルトンインスタンスをクリア
+            _instance = null;
+            
+            // 接続を切断
+            Disconnect();
+        }
+
         private void OnDestroy()
         {
             Disconnect();
+            
+            // このインスタンスが現在のシングルトンインスタンスであれば、参照をクリア
+            if (_instance == this)
+            {
+                _instance = null;
+            }
         }
 
         public void Connect()
@@ -147,6 +167,26 @@ namespace YakeruUSB
             
             OnProgressUpdated?.Invoke(progressData);
         }
+
+        // ステータスメッセージの変換（フロントエンド表示用）
+        public static string GetStatusMessage(string status)
+        {
+            switch (status)
+            {
+                case "started": return "準備中...";
+                case "opening_device": return "デバイスを開いています...";
+                case "locking_volume": return "ボリュームをロック中...";
+                case "dismounting_volume": return "ボリュームをアンマウント中...";
+                case "writing": return "書き込み中...";
+                case "flushing": return "データをフラッシュ中...";
+                case "completed": return "完了しました";
+                default:
+                    if (status.StartsWith("checking_volumes")) return "ボリュームを確認中...";
+                    if (status.StartsWith("dismounting_")) return "ドライブをアンマウント中...";
+                    if (status.StartsWith("error")) return status;
+                    return status;
+            }
+        }
     }
 
     // メインスレッドでコールバックを実行するためのユーティリティクラス
@@ -161,9 +201,18 @@ namespace YakeruUSB
             {
                 if (_instance == null)
                 {
-                    var go = new GameObject("MainThreadDispatcher");
-                    _instance = go.AddComponent<MainThreadDispatcher>();
-                    DontDestroyOnLoad(go);
+                    #if UNITY_2022_3_OR_NEWER
+                    _instance = FindAnyObjectByType<MainThreadDispatcher>();
+                    #else
+                    _instance = FindObjectOfType<MainThreadDispatcher>();
+                    #endif
+                    
+                    if (_instance == null)
+                    {
+                        var go = new GameObject("MainThreadDispatcher");
+                        _instance = go.AddComponent<MainThreadDispatcher>();
+                        DontDestroyOnLoad(go);
+                    }
                 }
                 return _instance;
             }
@@ -175,6 +224,23 @@ namespace YakeruUSB
             {
                 _instance = this;
                 DontDestroyOnLoad(this.gameObject);
+            }
+            else if (_instance != this)
+            {
+                Destroy(gameObject);
+            }
+        }
+
+        private void OnApplicationQuit()
+        {
+            _instance = null;
+        }
+
+        private void OnDestroy()
+        {
+            if (_instance == this)
+            {
+                _instance = null;
             }
         }
 

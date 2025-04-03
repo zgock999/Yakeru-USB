@@ -3,6 +3,7 @@ import re
 import platform
 import subprocess
 import json
+import ctypes
 
 def list_usb_devices():
     """システム上のUSBブロックデバイスを検出して返す"""
@@ -67,17 +68,64 @@ def _list_windows_usb_devices():
                 data = [data]
                 
             for disk in data:
-                devices.append({
-                    "id": f"\\\\.\\PhysicalDrive{disk['Number']}",
-                    "name": disk.get("FriendlyName", "Unknown Device"),
-                    "size": f"{disk.get('Size', 0) // (1024**3)} GB",
-                    "status": disk.get("OperationalStatus", "Unknown")
-                })
+                disk_number = disk.get('Number')
+                # 管理者権限と適切なディスク形式を確認
+                if _is_disk_accessible(disk_number):
+                    devices.append({
+                        "id": f"\\\\?\\PhysicalDrive{disk_number}",  # 修正: 適切なデバイスパス形式
+                        "name": disk.get("FriendlyName", "Unknown Device"),
+                        "size": f"{disk.get('Size', 0) // (1024**3)} GB",
+                        "status": disk.get("OperationalStatus", "Unknown")
+                    })
                 
         return devices
     except Exception as e:
         print(f"Error listing Windows USB devices: {e}")
         return []
+
+def _is_disk_accessible(disk_number):
+    """Windowsでディスクがアクセス可能かどうかをチェック"""
+    try:
+        # Windowsのhandle関数でディスクを開いてテスト
+        device_path = f"\\\\.\\PhysicalDrive{disk_number}"
+        
+        # 管理者権限がなければFalseを返す
+        if not _is_admin():
+            print(f"Warning: Admin privileges required to access {device_path}")
+            return False
+            
+        # FILEオブジェクトをCtypesで開いてみる
+        GENERIC_READ = 0x80000000
+        OPEN_EXISTING = 3
+        FILE_SHARE_READ = 0x00000001
+        FILE_SHARE_WRITE = 0x00000002
+        
+        handle = ctypes.windll.kernel32.CreateFileW(
+            device_path,
+            GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            0,
+            None
+        )
+        
+        if handle == -1:  # INVALID_HANDLE_VALUE
+            return False
+        
+        # ハンドルを閉じる
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    except Exception as e:
+        print(f"Error checking disk accessibility: {e}")
+        return False
+
+def _is_admin():
+    """現在のプロセスが管理者権限で実行されているかチェック"""
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except:
+        return False
 
 def _list_macos_usb_devices():
     """macOSシステム上のUSBブロックデバイスを検出"""

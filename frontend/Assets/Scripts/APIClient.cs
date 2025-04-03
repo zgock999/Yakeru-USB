@@ -66,7 +66,12 @@ namespace YakeruUSB
             {
                 if (_instance == null)
                 {
+                    #if UNITY_2022_3_OR_NEWER
+                    _instance = FindAnyObjectByType<APIClient>();
+                    #else
                     _instance = FindObjectOfType<APIClient>();
+                    #endif
+                    
                     if (_instance == null)
                     {
                         GameObject go = new GameObject("APIClient");
@@ -88,6 +93,21 @@ namespace YakeruUSB
 
             _instance = this;
             DontDestroyOnLoad(gameObject);
+        }
+
+        private void OnApplicationQuit()
+        {
+            // アプリケーション終了時にシングルトンインスタンスをクリア
+            _instance = null;
+        }
+
+        private void OnDestroy()
+        {
+            // このインスタンスが現在のシングルトンインスタンスであれば、参照をクリア
+            if (_instance == this)
+            {
+                _instance = null;
+            }
         }
 
         // ISOファイル一覧を取得

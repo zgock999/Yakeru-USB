@@ -237,24 +237,8 @@ namespace YakeruUSB
             progressSlider.value = progressData.progress / 100f;
             progressText.text = $"{progressData.progress}%";
             
-            switch (progressData.status)
-            {
-                case "started":
-                    statusText.text = "Preparing...";
-                    break;
-                case "writing":
-                    statusText.text = "Writing data...";
-                    break;
-                case "completed":
-                    statusText.text = "Completed!";
-                    break;
-                default:
-                    if (progressData.status.StartsWith("error"))
-                    {
-                        statusText.text = progressData.status;
-                    }
-                    break;
-            }
+            // 翻訳されたステータスメッセージを表示
+            statusText.text = WebSocketClient.GetStatusMessage(progressData.status);
         }
 
         private void OnWriteCompleted()

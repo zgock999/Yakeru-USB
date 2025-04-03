@@ -34,7 +34,12 @@ namespace YakeruUSB
             {
                 if (_instance == null)
                 {
+                    #if UNITY_2022_3_OR_NEWER
+                    _instance = FindAnyObjectByType<ISOManager>();
+                    #else
                     _instance = FindObjectOfType<ISOManager>();
+                    #endif
+                    
                     if (_instance == null)
                     {
                         GameObject go = new GameObject("ISOManager");
@@ -56,6 +61,33 @@ namespace YakeruUSB
 
             _instance = this;
             DontDestroyOnLoad(gameObject);
+        }
+
+        private void OnApplicationQuit()
+        {
+            // アプリケーション終了時にシングルトンインスタンスをクリア
+            _instance = null;
+            
+            // WebSocketクライアントとの接続を切断
+            if (WebSocketClient.Instance != null)
+            {
+                WebSocketClient.Instance.Disconnect();
+            }
+        }
+
+        private void OnDestroy()
+        {
+            // このオブジェクトが破棄されるときにイベントリスナーを解除
+            if (WebSocketClient.Instance != null)
+            {
+                WebSocketClient.Instance.OnProgressUpdated -= HandleProgressUpdate;
+            }
+            
+            // このインスタンスが現在のシングルトンインスタンスであれば、参照をクリア
+            if (_instance == this)
+            {
+                _instance = null;
+            }
         }
 
         private void Start()

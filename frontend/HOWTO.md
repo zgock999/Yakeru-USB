@@ -146,3 +146,37 @@
 3. `Build` または `Build And Run` をクリック
 4. 出力先フォルダを選択して、アプリケーションをビルド
 5. ビルドしたアプリケーションはバックエンドAPIサーバーと同じマシン上で実行するのがベスト
+
+## トラブルシューティング
+
+### シーン切り替え時の「Objects were not cleaned up」警告
+
+シーン切り替え時に「Some objects were not cleaned up when closing the scene」といった警告が表示される場合は、シングルトンオブジェクトがうまく破棄されていない可能性があります。
+
+**解決方法**:
+
+1. シングルトンクラスに以下のメソッドが実装されていることを確認:
+   - `OnApplicationQuit()`
+   - `OnDestroy()`
+
+2. より安全なシングルトン設計として `SingletonBase<T>` クラスを継承することを検討:
+   ```csharp
+   public class MyManager : SingletonBase<MyManager>
+   {
+       // シングルトンを継承したクラス固有の処理
+   }
+   ```
+
+### DontDestroyOnLoad 関連の問題
+
+`DontDestroyOnLoad` を使用したオブジェクトは、通常のシーン破棄プロセスの外で存続します。これにより以下の問題が起こることがあります：
+
+1. シーンを再ロード/切り替えた際に重複インスタンスが作成される
+2. イベント購読が適切に解除されない
+3. シーン終了時にリソースリークが発生する
+
+**解決方法**:
+
+- シングルトンの初期化時に既存のインスタンスを確認
+- OnDestroy でイベント購読を明示的に解除
+- OnApplicationQuit で静的参照をクリア
