@@ -157,6 +157,9 @@ namespace YakeruUSB
                 {
                     isWriting = true;
                     OnWriteStarted?.Invoke();
+                    
+                    // WebSocket接続を開始または再接続
+                    WebSocketClient.Instance.Connect();
                 },
                 onError: error =>
                 {

@@ -12,6 +12,12 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 ISO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "isos")
 
+# 書き込み状態追跡用のグローバル変数
+write_status = {
+    "progress": 0,
+    "status": "idle"
+}
+
 @app.route('/api/isos', methods=['GET'])
 def get_isos():
     """ISOファイルの一覧を取得"""
@@ -45,6 +51,10 @@ def write_iso():
         
         if not os.path.exists(iso_path):
             return jsonify({"error": f"ISO file {iso_file} not found"}), 404
+        
+        # 書き込み状態をリセット
+        global write_status
+        write_status = {"progress": 0, "status": "started"}
             
         # 非同期で書き込み処理を開始
         socketio.start_background_task(
@@ -55,8 +65,16 @@ def write_iso():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/write-status', methods=['GET'])
+def get_write_status():
+    """現在の書き込み状態を取得するエンドポイント（ポーリング用）"""
+    global write_status
+    return jsonify(write_status)
+
 def progress_callback(progress, status):
-    """書き込み進捗をWebSocketで通知"""
+    """書き込み進捗をWebSocketで通知し、ステータスを更新"""
+    global write_status
+    write_status = {"progress": progress, "status": status}
     socketio.emit('write_progress', {'progress': progress, 'status': status})
 
 if __name__ == '__main__':

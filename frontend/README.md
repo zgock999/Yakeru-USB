@@ -8,14 +8,13 @@ ISOファイルをUSBメモリに書き込むためのUnityフロントエンド
 2. 必要なパッケージがインストールされていることを確認します。
    - TextMeshPro
    - Newtonsoft.Json (Unity Package Manager経由)
-   - NativeWebSocket (自動的にインストールされます)
 
 3. シーンを開いて実行します。バックエンドサーバーが起動していることを確認してください。
 
 ## 主要なスクリプト
 
 - **APIClient.cs**: バックエンドAPIと通信するHTTPクライアント
-- **WebSocketClient.cs**: 書き込み進捗を監視するWebSocketクライアント
+- **WebSocketClient.cs**: 書き込み進捗を監視するクライアント
 - **ISOManager.cs**: ISOファイルとUSBデバイスの管理
 - **UIController.cs**: UIの制御
 
@@ -31,6 +30,15 @@ ISOファイルをUSBメモリに書き込むためのUnityフロントエンド
 3. 書き込み先のUSBデバイスを選択します。
 4. 「Write」ボタンをクリックして書き込みを開始します。
 5. 進捗バーで書き込みの状況を確認します。
+
+## トラブルシューティング
+
+### 接続エラー
+
+- バックエンドサーバーが実行中であることを確認
+- APIClientクラスのapiBaseUrlが正しいことを確認（デフォルト: http://localhost:5000/api）
+- WebSocketClientクラスのsocketUrlが正しいことを確認（デフォルト: http://localhost:5000）
+- ファイアウォール設定でHTTP接続が許可されていることを確認
 
 ## 注意事項
 

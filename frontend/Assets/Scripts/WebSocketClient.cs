@@ -1,8 +1,11 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
+using System.Threading;
 using UnityEngine;
-using NativeWebSocket;
+using UnityEngine.Networking;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace YakeruUSB
 {
@@ -15,10 +18,11 @@ namespace YakeruUSB
 
     public class WebSocketClient : MonoBehaviour
     {
-        [SerializeField] private string webSocketUrl = "ws://localhost:5000";
+        [SerializeField] private string socketUrl = "http://localhost:5000";
+        [SerializeField] private float pollInterval = 1.0f; // 進捗確認の間隔（秒）
         
-        private WebSocket webSocket;
         private bool isConnected = false;
+        private bool isPolling = false;
 
         // シングルトンインスタンス
         private static WebSocketClient _instance;
@@ -55,22 +59,9 @@ namespace YakeruUSB
             DontDestroyOnLoad(gameObject);
         }
 
-        private async void OnDestroy()
+        private void OnDestroy()
         {
-            if (webSocket != null)
-            {
-                await webSocket.Close();
-            }
-        }
-
-        private void Update()
-        {
-            if (webSocket != null)
-            {
-                #if !UNITY_WEBGL || UNITY_EDITOR
-                webSocket.DispatchMessageQueue();
-                #endif
-            }
+            Disconnect();
         }
 
         public void Connect()
@@ -80,89 +71,81 @@ namespace YakeruUSB
                 return;
             }
 
-            StartCoroutine(ConnectToWebSocket());
+            // 接続とポーリングを開始
+            isConnected = true;
+            StartPolling();
         }
 
-        private IEnumerator ConnectToWebSocket()
+        private void StartPolling()
         {
-            webSocket = new WebSocket(webSocketUrl);
-
-            webSocket.OnOpen += () =>
+            if (!isPolling)
             {
-                Debug.Log("WebSocket connection opened");
-                isConnected = true;
-            };
-
-            webSocket.OnError += (e) =>
-            {
-                Debug.LogError($"WebSocket Error: {e}");
-            };
-
-            webSocket.OnClose += (e) =>
-            {
-                Debug.Log("WebSocket connection closed");
-                isConnected = false;
-            };
-
-            webSocket.OnMessage += (bytes) =>
-            {
-                var message = System.Text.Encoding.UTF8.GetString(bytes);
-                ProcessMessage(message);
-            };
-
-            // WebSocketに接続
-            yield return new WaitForSeconds(0.5f);
-            
-            try
-            {
-                yield return webSocket.Connect();
-            }
-            catch (Exception e)
-            {
-                Debug.LogError($"Failed to connect to WebSocket: {e.Message}");
+                isPolling = true;
+                StartCoroutine(PollProgressRoutine());
             }
         }
 
-        private void ProcessMessage(string message)
+        private IEnumerator PollProgressRoutine()
         {
-            try
+            while (isConnected && isPolling)
             {
-                // Socket.IOからのメッセージはJSON形式なので、適切にパース
-                // 実際のSocket.IOメッセージ形式に応じて適宜調整が必要
-                if (message.Contains("write_progress"))
+                yield return StartCoroutine(PollProgress());
+                yield return new WaitForSeconds(pollInterval);
+            }
+        }
+
+        private IEnumerator PollProgress()
+        {
+            string url = $"{socketUrl}/api/write-status";
+
+            using (UnityWebRequest request = UnityWebRequest.Get(url))
+            {
+                yield return request.SendWebRequest();
+
+                if (request.result == UnityWebRequest.Result.Success)
                 {
-                    // Socket.IOメッセージからデータ部分を抽出
-                    int startIndex = message.IndexOf("{\"progress\":");
-                    if (startIndex >= 0)
+                    try
                     {
-                        string jsonPart = message.Substring(startIndex);
-                        int endIndex = jsonPart.LastIndexOf("}");
-                        if (endIndex >= 0)
+                        string json = request.downloadHandler.text;
+                        JObject responseObj = JObject.Parse(json);
+
+                        if (responseObj.ContainsKey("progress"))
                         {
-                            jsonPart = jsonPart.Substring(0, endIndex + 1);
-                            ProgressData progressData = JsonConvert.DeserializeObject<ProgressData>(jsonPart);
-                            
-                            // メインスレッドでイベント発火
-                            MainThreadDispatcher.Execute(() =>
+                            ProgressData progress = new ProgressData
                             {
-                                OnProgressUpdated?.Invoke(progressData);
-                            });
+                                progress = responseObj["progress"].Value<int>(),
+                                status = responseObj["status"].Value<string>()
+                            };
+
+                            // イベント発火
+                            OnProgressUpdated?.Invoke(progress);
                         }
+                    }
+                    catch (Exception e)
+                    {
+                        Debug.LogError($"Error parsing progress data: {e.Message}");
                     }
                 }
             }
-            catch (Exception e)
-            {
-                Debug.LogError($"Error processing WebSocket message: {e.Message}");
-            }
         }
 
-        public async void Disconnect()
+        public void Disconnect()
         {
-            if (webSocket != null)
+            isConnected = false;
+            isPolling = false;
+            StopAllCoroutines();
+        }
+
+        // 直接進捗データを受け取るためのメソッド（テスト用）
+        public void SimulateProgressUpdate(int progress, string status)
+        {
+            ProgressData progressData = new ProgressData
             {
-                await webSocket.Close();
-            }
+                progress = progress,
+                status = status
+            };
+            
+            OnProgressUpdated?.Invoke(progressData);
         }
     }
 

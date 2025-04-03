@@ -59,7 +59,10 @@ mkdir -p isos
 2. 必要なパッケージが自動的にインストールされます
    - TextMeshPro
    - Newtonsoft.Json
-   - NativeWebSocket
+
+3. プロジェクトを初めて開く場合は、シーンをセットアップする必要があります
+   - 詳細な手順は `frontend/HOWTO.md` を参照してください
+   - または、`File > New Scene` からシーンを新規作成し、必要なコンポーネントを配置してください
 
 ## 使用方法
 
@@ -106,7 +109,9 @@ Yakeru-USB/
 ├── frontend/            # Unity フロントエンド
 │   ├── Assets/
 │   │   ├── Scripts/     # C#スクリプト
-│   │   └── Scenes/      # Unityシーン
+│   │   ├── Scenes/      # Unityシーン
+│   │   └── Prefabs/     # UIコンポーネントのプレハブ
+│   ├── HOWTO.md         # シーン作成などの開発ガイド
 │   └── README.md        # フロントエンド固有の説明
 └── README.md            # このファイル
 ```
