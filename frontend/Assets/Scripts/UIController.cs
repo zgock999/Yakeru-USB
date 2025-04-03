@@ -94,6 +94,9 @@ namespace YakeruUSB
             {
                 GameObject item = Instantiate(isoListItemPrefab, isoListContent);
                 
+                // リストアイテムのレイアウト設定
+                ConfigureListItemLayout(item);
+                
                 // 項目のテキストを設定
                 TextMeshProUGUI isoNameText = item.transform.Find("NameText").GetComponent<TextMeshProUGUI>();
                 TextMeshProUGUI isoSizeText = item.transform.Find("SizeText").GetComponent<TextMeshProUGUI>();
@@ -126,6 +129,9 @@ namespace YakeruUSB
             {
                 GameObject item = Instantiate(usbListItemPrefab, usbListContent);
                 
+                // リストアイテムのレイアウト設定
+                ConfigureListItemLayout(item);
+                
                 // 項目のテキストを設定
                 TextMeshProUGUI deviceNameText = item.transform.Find("NameText").GetComponent<TextMeshProUGUI>();
                 TextMeshProUGUI deviceSizeText = item.transform.Find("SizeText").GetComponent<TextMeshProUGUI>();
@@ -143,6 +149,27 @@ namespace YakeruUSB
             {
                 UpdateSelectedDevice();
             }
+        }
+
+        // リストアイテムのレイアウト設定
+        private void ConfigureListItemLayout(GameObject item)
+        {
+            // LayoutElementコンポーネントがなければ追加
+            LayoutElement layoutElement = item.GetComponent<LayoutElement>();
+            if (layoutElement == null)
+            {
+                layoutElement = item.AddComponent<LayoutElement>();
+            }
+            
+            // 優先高さを設定（Vertical Layout Groupと連携）
+            layoutElement.preferredHeight = 60;
+            layoutElement.flexibleWidth = 1;
+            
+            // ボタンのサイズを調整
+            RectTransform rectTransform = item.GetComponent<RectTransform>();
+            rectTransform.anchorMin = new Vector2(0, 0);
+            rectTransform.anchorMax = new Vector2(1, 0);
+            rectTransform.pivot = new Vector2(0.5f, 0);
         }
 
         private void OnISOSelected(ISOFile iso)

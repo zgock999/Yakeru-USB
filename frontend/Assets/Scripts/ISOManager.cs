@@ -133,8 +133,43 @@ namespace YakeruUSB
             ));
         }
 
-        // USBデバイス一覧を更新
+        // USBデバイス一覧を更新（Linuxでは強制再スキャンを試行）
         public void RefreshUSBDevices()
+        {
+            // プラットフォームに応じた処理
+            if (Application.platform == RuntimePlatform.LinuxEditor || 
+                Application.platform == RuntimePlatform.LinuxPlayer)
+            {
+                // Linux環境では強制的な再スキャンを試行
+                StartCoroutine(APIClient.Instance.RescanUSBDevices(
+                    onSuccess: devices =>
+                    {
+                        usbDevices = devices;
+                        OnUSBDevicesUpdated?.Invoke(usbDevices);
+                        
+                        // 選択中のUSBデバイスが一覧から削除された場合は選択解除
+                        if (SelectedDevice != null && !usbDevices.Exists(dev => dev.id == SelectedDevice.id))
+                        {
+                            SelectedDevice = null;
+                        }
+                    },
+                    onError: error =>
+                    {
+                        Debug.LogError($"Failed to rescan USB devices: {error}");
+                        // 通常のAPIコールにフォールバック
+                        FallbackRefreshUSBDevices();
+                    }
+                ));
+            }
+            else
+            {
+                // 通常の更新処理
+                FallbackRefreshUSBDevices();
+            }
+        }
+        
+        // 通常のUSBデバイス更新処理（フォールバック用）
+        private void FallbackRefreshUSBDevices()
         {
             StartCoroutine(APIClient.Instance.GetUSBDevices(
                 onSuccess: devices =>

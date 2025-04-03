@@ -5,6 +5,8 @@ import json
 from flask_socketio import SocketIO
 from usb_detector import list_usb_devices
 from iso_writer import write_iso_to_device, get_iso_files
+import platform
+import subprocess
 
 app = Flask(__name__)
 CORS(app)
@@ -70,6 +72,35 @@ def get_write_status():
     """現在の書き込み状態を取得するエンドポイント（ポーリング用）"""
     global write_status
     return jsonify(write_status)
+
+@app.route('/api/rescan-usb', methods=['POST'])
+def rescan_usb():
+    """USBデバイスを再スキャンする（Linuxのudevtrigger用）"""
+    try:
+        if platform.system() == "Linux":
+            try:
+                # udevadmコマンドでUSBデバイスを再検出
+                subprocess.run(
+                    ["udevadm", "trigger"],
+                    check=True
+                )
+                subprocess.run(
+                    ["udevadm", "settle"],
+                    check=True
+                )
+                # デバイスファイルの権限を確認/更新
+                subprocess.run(
+                    ["chmod", "-R", "a+rw", "/dev/sd*"],
+                    check=False
+                )
+            except Exception as e:
+                print(f"Warning: Failed to trigger USB rescan: {e}")
+        
+        # 更新されたデバイス一覧を返す
+        devices = list_usb_devices()
+        return jsonify({"devices": devices})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 def progress_callback(progress, status):
     """書き込み進捗をWebSocketで通知し、ステータスを更新"""

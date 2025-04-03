@@ -42,7 +42,19 @@
 2. スクロールビューの名前を `ISOListScrollView` に変更します
 3. 同様に、`RightPanel` にも `USBListScrollView` というスクロールビューを作成します
 
-4. 各スクロールビューの Content オブジェクトをリストアイテムのコンテナとして使用します
+4. 各スクロールビューの Content オブジェクトを選択し、以下の設定を行います：
+   - Inspector パネルで「Add Component」をクリックし、「Vertical Layout Group」を追加
+   - Vertical Layout Group の設定：
+     - Child Alignment: Upper Center
+     - Spacing: 5 (アイテム間の間隔)
+     - Child Controls Size にチェック：Width と Height
+     - Child Force Expand にチェック：Width のみ
+   - Inspector パネルで「Add Component」をクリックし、「Content Size Fitter」も追加
+     - Vertical Fit: Preferred Size
+
+5. スクロールビューの設定：
+   - ISOListScrollView の Viewport > Scrollbar Vertical を使ってスクロール動作を確認
+   - USBListScrollView も同様に設定
 
 #### 3.3 リストアイテムのプレハブ作成
 
@@ -97,6 +109,37 @@
 1. すべての設定が完了したら、シーンを保存します
 2. シーンをビルド設定に追加するには、`File` > `Build Settings` を開き、`Add Open Scenes` をクリックします
 3. プレイモードで動作確認を行います
+
+### レイアウトコンポーネントの設定
+
+#### Vertical Layout Group の詳細設定
+
+UIでリスト要素を縦に並べるVertical Layout Groupの設定について詳しく説明します：
+
+1. **リストのContent要素に追加**:
+   - ISOListScrollView > Viewport > Content を選択
+   - Inspector で「Add Component」> 「Layout」> 「Vertical Layout Group」
+
+2. **設定パラメータ**:
+   - Padding: リスト全体の余白（Top:5, Bottom:5, Left:5, Right:5 など）
+   - Spacing: リストアイテム間の間隔（10など）
+   - Child Alignment: 子要素の配置（Upper Center が推奨）
+   - Control Child Size: 子要素のサイズ制御
+     - Width: オン（横幅をコントロール）
+     - Height: オン（高さをコントロール）
+   - Child Force Expand: 子要素の拡張
+     - Width: オン（幅を親に合わせる）
+     - Height: オフ（各アイテムの高さは固定）
+
+3. **Content Size Fitter の追加**:
+   - Content 要素に「Content Size Fitter」も追加すると、内容に応じて縦サイズが自動調整されます
+   - Vertical Fit: Preferred Size
+
+4. **リストアイテムの設定**:
+   - Layout Element コンポーネントを各アイテムに追加して、最小/優先サイズを指定できます
+   - Preferred Height: 60 などに設定
+
+これにより、リストアイテムの数が増減しても自動的にレイアウトが調整されるようになります。
 
 ## UIデザインのヒント
 

@@ -217,5 +217,34 @@ namespace YakeruUSB
                 }
             }
         }
+
+        // USBデバイスを強制的に再スキャン（Linux環境用）
+        public IEnumerator RescanUSBDevices(Action<List<USBDevice>> onSuccess, Action<string> onError)
+        {
+            string url = $"{apiBaseUrl}/rescan-usb";
+            
+            using (UnityWebRequest request = UnityWebRequest.PostWwwForm(url, ""))
+            {
+                yield return request.SendWebRequest();
+
+                if (request.result != UnityWebRequest.Result.Success)
+                {
+                    onError?.Invoke($"Error: {request.error}");
+                }
+                else
+                {
+                    try
+                    {
+                        string json = request.downloadHandler.text;
+                        USBDeviceResponse response = JsonConvert.DeserializeObject<USBDeviceResponse>(json);
+                        onSuccess?.Invoke(response.devices);
+                    }
+                    catch (Exception e)
+                    {
+                        onError?.Invoke($"Parse error: {e.Message}");
+                    }
+                }
+            }
+        }
     }
 }

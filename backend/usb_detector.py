@@ -22,30 +22,173 @@ def _list_linux_usb_devices():
     """Linuxシステム上のUSBブロックデバイスを検出"""
     devices = []
     
-    # lsblkコマンドでブロックデバイス情報を取得
     try:
+        # 方法1: lsblkコマンドでブロックデバイス情報を取得
         result = subprocess.run(
             ["lsblk", "-J", "-o", "NAME,SIZE,MODEL,VENDOR,MOUNTPOINT,REMOVABLE,TYPE"],
-            capture_output=True, text=True, check=True
+            capture_output=True, text=True
         )
         
-        data = json.loads(result.stdout)
-        
-        # リムーバブルディスクのみフィルタリング
-        for device in data.get("blockdevices", []):
-            if device.get("type") == "disk" and device.get("removable") == "1":
-                devices.append({
-                    "id": f"/dev/{device['name']}",
-                    "name": device.get("model", "Unknown Device"),
-                    "size": device.get("size", "Unknown"),
-                    "vendor": device.get("vendor", "Unknown"),
-                    "mountpoint": device.get("mountpoint")
-                })
+        if result.returncode == 0:
+            data = json.loads(result.stdout)
+            
+            # リムーバブルディスクのみフィルタリング
+            for device in data.get("blockdevices", []):
+                if device.get("type") == "disk" and device.get("removable") == "1":
+                    # 追加されたUSBデバイスの詳細情報を取得
+                    devices.append({
+                        "id": f"/dev/{device['name']}",
+                        "name": device.get("model", "Unknown Device"),
+                        "size": device.get("size", "Unknown"),
+                        "vendor": device.get("vendor", "Unknown"),
+                        "mountpoint": device.get("mountpoint")
+                    })
+        else:
+            # 代替方法: ls -la /dev/sd* で直接デバイスを取得
+            alt_result = subprocess.run(
+                ["ls", "-la", "/dev/sd*"],
+                capture_output=True, text=True
+            )
+            
+            if alt_result.returncode == 0:
+                lines = alt_result.stdout.strip().split('\n')
+                for line in lines:
+                    if "brw-" in line and "/dev/sd" in line:
+                        # /dev/sda, /dev/sdb などのデバイス名を抽出
+                        match = re.search(r'/dev/sd[a-z]+', line)
+                        if match:
+                            dev_path = match.group(0)
+                            # パーティションを除外（/dev/sda1 などは除外）
+                            if not re.search(r'/dev/sd[a-z]+\d+', dev_path):
+                                # デバイス情報の取得
+                                name = _get_device_model(dev_path) or "USB Storage"
+                                size = _get_device_size(dev_path) or "Unknown"
+                                devices.append({
+                                    "id": dev_path,
+                                    "name": name,
+                                    "size": size,
+                                    "vendor": "Unknown",
+                                    "mountpoint": _get_device_mountpoint(dev_path)
+                                })
+            
+            # さらに代替方法: /sys/block/sd* ディレクトリを確認
+            if not devices:
+                for dev_name in os.listdir("/sys/block"):
+                    if dev_name.startswith("sd"):
+                        removable_path = f"/sys/block/{dev_name}/removable"
+                        if os.path.exists(removable_path):
+                            with open(removable_path, 'r') as f:
+                                if f.read().strip() == "1":
+                                    dev_path = f"/dev/{dev_name}"
+                                    name = _get_device_model(dev_path) or "USB Storage"
+                                    size = _get_device_size(dev_path) or "Unknown"
+                                    devices.append({
+                                        "id": dev_path,
+                                        "name": name,
+                                        "size": size,
+                                        "vendor": "Unknown",
+                                        "mountpoint": _get_device_mountpoint(dev_path)
+                                    })
+                
+        # USBデバイスが検出されなかった場合、udevadmコマンドも試す
+        if not devices:
+            devices = _detect_usb_devices_with_udevadm()
                 
         return devices
     except Exception as e:
         print(f"Error listing Linux USB devices: {e}")
+        # エラーが発生した場合、代替の検出方法を試行
+        try:
+            return _detect_usb_devices_with_udevadm()
+        except Exception as e2:
+            print(f"Failed to detect USB devices with alternative method: {e2}")
+            return []
+
+def _detect_usb_devices_with_udevadm():
+    """udevadmコマンドを使用してUSBデバイスを検出"""
+    devices = []
+    try:
+        # すべてのブロックデバイスを取得
+        result = subprocess.run(
+            ["udevadm", "info", "--query=property", "--name=/dev/sda"],
+            capture_output=True, text=True
+        )
+        
+        # USBバスに接続されているデバイスのみをフィルタリング
+        if "ID_BUS=usb" in result.stdout:
+            dev_path = "/dev/sda"
+            name = _get_device_model(dev_path) or "USB Storage"
+            size = _get_device_size(dev_path) or "Unknown"
+            devices.append({
+                "id": dev_path,
+                "name": name,
+                "size": size,
+                "vendor": "Unknown",
+                "mountpoint": _get_device_mountpoint(dev_path)
+            })
+            
+        # sdbからsdzまでチェック
+        for c in 'bcdefghijklmnopqrstuvwxyz':
+            dev_path = f"/dev/sd{c}"
+            if os.path.exists(dev_path):
+                try:
+                    result = subprocess.run(
+                        ["udevadm", "info", "--query=property", f"--name={dev_path}"],
+                        capture_output=True, text=True
+                    )
+                    if "ID_BUS=usb" in result.stdout:
+                        name = _get_device_model(dev_path) or "USB Storage"
+                        size = _get_device_size(dev_path) or "Unknown"
+                        devices.append({
+                            "id": dev_path,
+                            "name": name,
+                            "size": size,
+                            "vendor": "Unknown",
+                            "mountpoint": _get_device_mountpoint(dev_path)
+                        })
+                except:
+                    pass
+        
+        return devices
+    except Exception as e:
+        print(f"Error detecting USB devices with udevadm: {e}")
         return []
+
+def _get_device_model(dev_path):
+    """デバイスのモデル名を取得"""
+    try:
+        # デバイスのモデル名を取得
+        result = subprocess.run(
+            ["lsblk", "-no", "MODEL", dev_path],
+            capture_output=True, text=True
+        )
+        return result.stdout.strip() or "USB Storage"
+    except:
+        return "USB Storage"
+
+def _get_device_size(dev_path):
+    """デバイスのサイズを取得"""
+    try:
+        # デバイスのサイズを取得
+        result = subprocess.run(
+            ["lsblk", "-no", "SIZE", dev_path],
+            capture_output=True, text=True
+        )
+        return result.stdout.strip() or "Unknown"
+    except:
+        return "Unknown"
+
+def _get_device_mountpoint(dev_path):
+    """デバイスのマウントポイントを取得"""
+    try:
+        # デバイスのマウントポイントを取得
+        result = subprocess.run(
+            ["lsblk", "-no", "MOUNTPOINT", dev_path],
+            capture_output=True, text=True
+        )
+        return result.stdout.strip() or None
+    except:
+        return None
 
 def _list_windows_usb_devices():
     """Windowsシステム上のUSBブロックデバイスを検出"""

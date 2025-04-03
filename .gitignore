@@ -125,11 +125,16 @@ dmypy.json
 [Uu]ser[Ss]ettings/
 
 # MemoryCaptures（プロファイリングデータ）を無視
-[Mm]emoryCaptures/
+frontend/[Mm]emoryCaptures/
 
 # アセットストアツールプラグイン
-[Aa]ssets/AssetStoreTools*
+frontend/[Aa]ssets/AssetStoreTools*
 
+# アセットストアツールプラグイン
+frontend/[Aa]ssets/Fonts/
+frontend/[Aa]ssets/Fonts.meta
+frontend/[Aa]ssets/TextMesh Pro/
+frontend/[Aa]ssets/TextMesh Pro.meta
 # Visual Studioのキャッシュディレクトリ
 .vs/
 .vsconfig
@@ -172,11 +177,11 @@ sysinfo.txt
 crashlytics-build.properties
 
 # Packed Addressables
-/[Aa]ssets/[Aa]ddressable[Aa]ssets[Dd]ata/*/*.bin*
+frontend/[Aa]ssets/[Aa]ddressable[Aa]ssets[Dd]ata/*/*.bin*
 
 # Temporary auto-generated Android Assets
-/[Aa]ssets/[Ss]treamingAssets/aa.meta
-/[Aa]ssets/[Ss]treamingAssets/aa/*
+frontend/[Aa]ssets/[Ss]treamingAssets/aa.meta
+frontend/[Aa]ssets/[Ss]treamingAssets/aa/*
 
 ### プロジェクト特有の設定 ###
 # バックエンドのISOファイル
