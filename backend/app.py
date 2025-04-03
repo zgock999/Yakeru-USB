@@ -7,6 +7,7 @@ from usb_detector import list_usb_devices
 from iso_writer import write_iso_to_device, get_iso_files
 import platform
 import subprocess
+import time
 
 app = Flask(__name__)
 CORS(app)
@@ -17,7 +18,11 @@ ISO_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "isos")
 # 書き込み状態追跡用のグローバル変数
 write_status = {
     "progress": 0,
-    "status": "idle"
+    "status": "idle",
+    "start_time": None,
+    "estimated_time": None,
+    "total_size": 0,
+    "bytes_written": 0
 }
 
 @app.route('/api/isos', methods=['GET'])
@@ -105,8 +110,32 @@ def rescan_usb():
 def progress_callback(progress, status):
     """書き込み進捗をWebSocketで通知し、ステータスを更新"""
     global write_status
-    write_status = {"progress": progress, "status": status}
-    socketio.emit('write_progress', {'progress': progress, 'status': status})
+    
+    # 状態に基づいて追加情報を設定
+    if status == "started":
+        write_status["start_time"] = time.time()
+        write_status["estimated_time"] = None
+    elif status == "writing" and write_status["start_time"] is not None:
+        elapsed_time = time.time() - write_status["start_time"]
+        if progress > 0:
+            # 残りの推定時間を計算
+            write_status["estimated_time"] = (elapsed_time / progress) * (100 - progress)
+    
+    # 基本的な進捗情報を更新
+    write_status["progress"] = progress
+    write_status["status"] = status
+    
+    # ソケットで通知
+    progress_data = {
+        'progress': progress, 
+        'status': status
+    }
+    
+    # 追加情報があれば含める
+    if write_status["estimated_time"] is not None:
+        progress_data["eta"] = int(write_status["estimated_time"])
+        
+    socketio.emit('write_progress', progress_data)
 
 if __name__ == '__main__':
     # フォルダが存在しない場合は作成

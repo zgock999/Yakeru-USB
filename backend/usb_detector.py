@@ -162,7 +162,9 @@ def _get_device_model(dev_path):
             ["lsblk", "-no", "MODEL", dev_path],
             capture_output=True, text=True
         )
-        return result.stdout.strip() or "USB Storage"
+        # 複数行の場合は最初の行だけを返す
+        model_output = result.stdout.strip().split('\n')[0]
+        return model_output or "USB Storage"
     except:
         return "USB Storage"
 
@@ -174,7 +176,9 @@ def _get_device_size(dev_path):
             ["lsblk", "-no", "SIZE", dev_path],
             capture_output=True, text=True
         )
-        return result.stdout.strip() or "Unknown"
+        # 複数行の場合は最初の行だけを返す
+        size_output = result.stdout.strip().split('\n')[0]
+        return size_output or "Unknown"
     except:
         return "Unknown"
 
@@ -186,7 +190,9 @@ def _get_device_mountpoint(dev_path):
             ["lsblk", "-no", "MOUNTPOINT", dev_path],
             capture_output=True, text=True
         )
-        return result.stdout.strip() or None
+        # 複数行の場合は最初の行だけを返す
+        mountpoint_output = result.stdout.strip().split('\n')[0]
+        return mountpoint_output or None
     except:
         return None
 

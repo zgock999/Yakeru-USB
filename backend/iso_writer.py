@@ -8,6 +8,7 @@ import ctypes
 from ctypes import wintypes
 import subprocess
 import tempfile
+import math
 
 def get_iso_files(iso_dir):
     """指定ディレクトリ内のISOファイル一覧を取得"""
@@ -45,16 +46,22 @@ def write_iso_to_device(iso_path, device_path, progress_callback=None):
         # ISOファイルのサイズを取得
         iso_size = os.path.getsize(iso_path)
         
+        # 進捗状況追跡用の状態変数
+        state = {
+            "bytes_written": 0,
+            "iso_size": iso_size,
+            "start_time": time.time(),
+            "last_report_time": time.time()
+        }
+        
         # Windowsの場合、特別な処理が必要
         if platform.system() == "Windows":
-            return _write_iso_to_windows_device(iso_path, device_path, iso_size, progress_callback)
+            return _write_iso_to_windows_device(iso_path, device_path, state, progress_callback)
         
         # Linux/macOSの場合の標準処理    
         with open(iso_path, 'rb') as iso_file:
             with open(device_path, 'wb') as device:
                 buffer_size = 1024 * 1024  # 1MB
-                bytes_written = 0
-                last_report_time = time.time()
                 report_interval = 0.5  # 進捗報告の間隔 (秒)
                 
                 while True:
@@ -63,14 +70,14 @@ def write_iso_to_device(iso_path, device_path, progress_callback=None):
                         break
                         
                     device.write(buffer)
-                    bytes_written += len(buffer)
+                    state["bytes_written"] += len(buffer)
                     
                     # 定期的に進捗を報告
                     current_time = time.time()
-                    if progress_callback and (current_time - last_report_time) >= report_interval:
-                        progress_percent = min(100, int(bytes_written * 100 / iso_size))
+                    if progress_callback and (current_time - state["last_report_time"]) >= report_interval:
+                        progress_percent = min(100, int(state["bytes_written"] * 100 / state["iso_size"]))
                         progress_callback(progress_percent, "writing")
-                        last_report_time = current_time
+                        state["last_report_time"] = current_time
                 
                 # 書き込みバッファをフラッシュ
                 device.flush()
@@ -92,7 +99,7 @@ def write_iso_to_device(iso_path, device_path, progress_callback=None):
         # 必要に応じてデバイスを安全に取り外す処理を追加できます
         pass
 
-def _write_iso_to_windows_device(iso_path, device_path, iso_size, progress_callback=None):
+def _write_iso_to_windows_device(iso_path, device_path, state, progress_callback=None):
     """Windows環境でISOファイルをデバイスに書き込む"""
     try:
         # デバイス番号を抽出
@@ -147,8 +154,6 @@ def _write_iso_to_windows_device(iso_path, device_path, iso_size, progress_callb
                     progress_callback(10, "writing")
                 
                 buffer_size = 1024 * 1024  # 1MB
-                bytes_written = 0
-                last_report_time = time.time()
                 report_interval = 0.5  # 進捗報告の間隔 (秒)
                 
                 while True:
@@ -177,14 +182,16 @@ def _write_iso_to_windows_device(iso_path, device_path, iso_size, progress_callb
                         error_code = ctypes.windll.kernel32.GetLastError()
                         raise OSError(f"Write failed. Error code: {error_code}")
                     
-                    bytes_written += bytes_written_ptr.value
+                    state["bytes_written"] += bytes_written_ptr.value
                     
                     # 進捗報告
                     current_time = time.time()
-                    if progress_callback and (current_time - last_report_time) >= report_interval:
-                        progress_percent = min(95, 10 + int(bytes_written * 85 / iso_size))
+                    if progress_callback and (current_time - state["last_report_time"]) >= report_interval:
+                        # 書き込み進捗を10%から95%の範囲で正規化
+                        raw_progress = state["bytes_written"] / state["iso_size"]
+                        progress_percent = min(95, 10 + math.floor(raw_progress * 85))
                         progress_callback(progress_percent, "writing")
-                        last_report_time = current_time
+                        state["last_report_time"] = current_time
                 
                 # 書き込みバッファをフラッシュ
                 if progress_callback:
