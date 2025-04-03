@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
+using System;
 
 namespace YakeruUSB
 {
@@ -19,6 +20,7 @@ namespace YakeruUSB
         [SerializeField] private Button refreshISOsButton;
         [SerializeField] private Button refreshDevicesButton;
         [SerializeField] private Button writeButton;
+        [SerializeField] private Button exitButton; // 追加：終了ボタン
         
         [Header("Info Panels")]
         [SerializeField] private GameObject selectedISOPanel;
@@ -53,6 +55,12 @@ namespace YakeruUSB
             refreshDevicesButton.onClick.AddListener(OnRefreshDevicesClicked);
             writeButton.onClick.AddListener(OnWriteClicked);
             closeMessageButton.onClick.AddListener(() => messagePanel.SetActive(false));
+            
+            // 終了ボタンのイベント設定
+            if (exitButton != null)
+            {
+                exitButton.onClick.AddListener(OnExitButtonClicked);
+            }
             
             // マネージャーからのイベントを購読
             ISOManager.Instance.OnISOFilesUpdated += UpdateISOList;
@@ -302,10 +310,80 @@ namespace YakeruUSB
             UpdateWriteButton();
         }
 
-        private void ShowMessage(string message)
+        // 終了ボタンがクリックされたときの処理
+        private void OnExitButtonClicked()
+        {
+            // 書き込み中は確認ダイアログを表示
+            if (ISOManager.Instance.IsWriting)
+            {
+                ShowConfirmExitDialog();
+            }
+            else
+            {
+                QuitApplication();
+            }
+        }
+        
+        // 終了確認ダイアログの表示
+        private void ShowConfirmExitDialog()
+        {
+            // 書き込み中に終了しようとした場合は警告メッセージを表示
+            ShowMessage("書き込み中です。本当に終了しますか？\n進行中の書き込みが中断されます。", true);
+        }
+        
+        // アプリケーションの終了処理
+        private void QuitApplication()
+        {
+            // WebSocketの切断
+            if (WebSocketClient.Instance != null)
+            {
+                WebSocketClient.Instance.Disconnect();
+            }
+            
+            // 少し待機してからアプリケーションを終了
+            StartCoroutine(DelayedQuit());
+        }
+        
+        // 遅延終了用のコルーチン
+        private System.Collections.IEnumerator DelayedQuit()
+        {
+            yield return new WaitForSeconds(0.5f);
+            
+#if UNITY_EDITOR
+            // エディタの場合
+            UnityEditor.EditorApplication.isPlaying = false;
+#else
+            // ビルドされたアプリケーションの場合
+            Application.Quit();
+#endif
+        }
+        
+        // メッセージ表示機能を拡張（確認ボタンを追加）
+        private void ShowMessage(string message, bool showConfirmButton = false)
         {
             messagePanel.SetActive(true);
             messageText.text = message;
+            
+            // 確認ボタンが必要な場合は表示
+            if (showConfirmButton && messagePanel.transform.Find("ConfirmButton") != null)
+            {
+                Button confirmButton = messagePanel.transform.Find("ConfirmButton").GetComponent<Button>();
+                confirmButton.gameObject.SetActive(true);
+                confirmButton.onClick.RemoveAllListeners();
+                confirmButton.onClick.AddListener(QuitApplication);
+                
+                // キャンセルボタンも表示
+                closeMessageButton.GetComponentInChildren<TextMeshProUGUI>().text = "キャンセル";
+            }
+            else
+            {
+                // 通常のメッセージ表示時は確認ボタンを非表示に
+                if (messagePanel.transform.Find("ConfirmButton") != null)
+                {
+                    messagePanel.transform.Find("ConfirmButton").gameObject.SetActive(false);
+                }
+                closeMessageButton.GetComponentInChildren<TextMeshProUGUI>().text = "閉じる";
+            }
         }
     }
 }
