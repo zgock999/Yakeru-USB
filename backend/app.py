@@ -93,11 +93,29 @@ def rescan_usb():
                     ["udevadm", "settle"],
                     check=True
                 )
-                # デバイスファイルの権限を確認/更新
-                subprocess.run(
-                    ["chmod", "-R", "a+rw", "/dev/sd*"],
-                    check=False
-                )
+                
+                # デバイスファイルの権限を確認/更新（エラーを無視）
+                try:
+                    # sdドライブの場合
+                    if os.path.exists("/dev/sd*"):
+                        subprocess.run(
+                            ["chmod", "-R", "a+rw", "/dev/sd*"],
+                            check=False
+                        )
+                    # vdドライブの場合（仮想環境向け）
+                    if os.path.exists("/dev/vd*"):
+                        subprocess.run(
+                            ["chmod", "-R", "a+rw", "/dev/vd*"],
+                            check=False
+                        )
+                    # nvmeドライブの場合
+                    if os.path.exists("/dev/nvme*"):
+                        subprocess.run(
+                            ["chmod", "-R", "a+rw", "/dev/nvme*"],
+                            check=False
+                        )
+                except Exception as e:
+                    print(f"Warning: Permission setting failed: {e}")
             except Exception as e:
                 print(f"Warning: Failed to trigger USB rescan: {e}")
         

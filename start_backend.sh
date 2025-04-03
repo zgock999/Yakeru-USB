@@ -23,10 +23,16 @@ if [ -f "venv/bin/activate" ]; then
 fi
 
 # USB権限を確保
-if [ -d "/dev" ]; then
-    echo "USBデバイスの権限を設定しています..."
-    chmod -R a+rw /dev/sd*  2>/dev/null || true
-fi
+echo "USBデバイスの権限を設定しています..."
+for dev_type in "/dev/sd*" "/dev/vd*" "/dev/nvme*"; do
+    # シェル展開によるワイルドカードの検出（ls -la よりも安全）
+    for dev in $dev_type; do
+        if [ -b "$dev" ]; then
+            echo "権限設定: $dev"
+            chmod a+rw "$dev" 2>/dev/null || true
+        fi
+    done
+done
 
 # polkitルールを追加（オプション）
 if [ ! -f "/etc/polkit-1/rules.d/99-yakeru-usb.rules" ]; then

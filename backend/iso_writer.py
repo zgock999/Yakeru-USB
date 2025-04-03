@@ -46,19 +46,102 @@ def write_iso_to_device(iso_path, device_path, progress_callback=None):
         # ISOファイルのサイズを取得
         iso_size = os.path.getsize(iso_path)
         
+        # 書き込みの進捗ポイント調整用のパラメータ
+        # 実際のディスク書き込みでは通常ファイルシステムキャッシュにより
+        # 最初は書き込みが高速に見え、その後ディスクへの実際の書き込みが遅くなる
+        progress_phases = [
+            {"name": "preparing", "start": 0, "end": 5, "duration": 2},
+            {"name": "initial_write", "start": 5, "end": 30, "duration": 10},
+            {"name": "main_write", "start": 30, "end": 85, "duration": None}, # 実際の書き込み時間に基づく
+            {"name": "flushing", "start": 85, "end": 95, "duration": 5},
+            {"name": "finalizing", "start": 95, "end": 99, "duration": 3}
+        ]
+            
         # 進捗状況追跡用の状態変数
         state = {
             "bytes_written": 0,
             "iso_size": iso_size,
             "start_time": time.time(),
-            "last_report_time": time.time()
+            "last_report_time": time.time(),
+            "current_phase": 0,
+            "phases": progress_phases
         }
+        
+        # 非同期で進捗フェーズ更新をシミュレート
+        if progress_callback:
+            simulate_thread = threading.Thread(
+                target=_simulate_progress_phases, 
+                args=(state, progress_callback)
+            )
+            simulate_thread.daemon = True
+            simulate_thread.start()
         
         # Windowsの場合、特別な処理が必要
         if platform.system() == "Windows":
-            return _write_iso_to_windows_device(iso_path, device_path, state, progress_callback)
+            result = _write_iso_to_windows_device(iso_path, device_path, state, progress_callback)
+        else:
+            # Linux/macOSの場合の標準処理
+            result = _write_iso_to_standard_device(iso_path, device_path, state, progress_callback)
         
-        # Linux/macOSの場合の標準処理    
+        # 完了を通知
+        if progress_callback and result:
+            progress_callback(100, "completed")
+            
+        return result
+        
+    except Exception as e:
+        # エラーを通知
+        if progress_callback:
+            progress_callback(0, f"error: {str(e)}")
+        raise
+    
+    finally:
+        # 必要に応じてデバイスを安全に取り外す処理を追加できます
+        pass
+
+def _simulate_progress_phases(state, callback):
+    """進捗フェーズを順次シミュレートして表示を滑らかにする"""
+    try:
+        phases = state["phases"]
+        
+        for i, phase in enumerate(phases):
+            if phase["duration"] is None:
+                continue  # 実際の書き込み状況に基づく実時間フェーズはスキップ
+                
+            # フェーズの開始
+            state["current_phase"] = i
+            
+            start_percent = phase["start"]
+            end_percent = phase["end"]
+            duration = phase["duration"]
+            
+            # フェーズ内の進捗を徐々に更新
+            steps = 20  # 更新回数
+            step_time = duration / steps
+            
+            for step in range(steps):
+                # 進捗度を計算（0.0～1.0）
+                progress_ratio = step / steps
+                # 現在のフェーズでの進捗％を計算
+                current_percent = start_percent + (end_percent - start_percent) * progress_ratio
+                # 丸めて整数に
+                percent = int(current_percent)
+                
+                # コールバックで通知
+                callback(percent, phase["name"])
+                
+                # 少し待機
+                time.sleep(step_time)
+                
+                # 実際の書き込みが終わっていれば中断
+                if state.get("write_completed", False):
+                    break
+    except Exception as e:
+        print(f"Error in progress simulation: {e}")
+
+def _write_iso_to_standard_device(iso_path, device_path, state, progress_callback=None):
+    """Linux/macOS環境でISOファイルをデバイスに書き込む"""
+    try:
         with open(iso_path, 'rb') as iso_file:
             with open(device_path, 'wb') as device:
                 buffer_size = 1024 * 1024  # 1MB
@@ -72,10 +155,15 @@ def write_iso_to_device(iso_path, device_path, progress_callback=None):
                     device.write(buffer)
                     state["bytes_written"] += len(buffer)
                     
-                    # 定期的に進捗を報告
+                    # 定期的に進捗を報告（実際の書き込み進捗）
                     current_time = time.time()
                     if progress_callback and (current_time - state["last_report_time"]) >= report_interval:
-                        progress_percent = min(100, int(state["bytes_written"] * 100 / state["iso_size"]))
+                        # メインの書き込みフェーズにマッピング
+                        phase = state["phases"][2]  # main_write phase
+                        raw_progress = state["bytes_written"] / state["iso_size"]
+                        
+                        # 30-85%の範囲に正規化
+                        progress_percent = int(phase["start"] + raw_progress * (phase["end"] - phase["start"]))
                         progress_callback(progress_percent, "writing")
                         state["last_report_time"] = current_time
                 
@@ -83,21 +171,19 @@ def write_iso_to_device(iso_path, device_path, progress_callback=None):
                 device.flush()
                 os.fsync(device.fileno())
         
-        # 完了を通知
-        if progress_callback:
-            progress_callback(100, "completed")
-            
-        return True
+        # 書き込み完了フラグを設定
+        state["write_completed"] = True
         
-    except Exception as e:
-        # エラーを通知
+        # フェーズの書き込みが終了したことを通知
         if progress_callback:
-            progress_callback(0, f"error: {str(e)}")
-        raise
-    
-    finally:
-        # 必要に応じてデバイスを安全に取り外す処理を追加できます
-        pass
+            state["current_phase"] = 3  # フラッシュフェーズへ
+            progress_callback(state["phases"][3]["start"], "flushing")
+        
+        return True
+    except Exception as e:
+        # エラー発生
+        state["write_completed"] = True
+        raise e
 
 def _write_iso_to_windows_device(iso_path, device_path, state, progress_callback=None):
     """Windows環境でISOファイルをデバイスに書き込む"""
@@ -151,7 +237,9 @@ def _write_iso_to_windows_device(iso_path, device_path, state, progress_callback
             try:
                 # 書き込みを開始
                 if progress_callback:
-                    progress_callback(10, "writing")
+                    # 準備フェーズ完了、初期書き込みフェーズに移行
+                    state["current_phase"] = 1
+                    progress_callback(state["phases"][1]["start"], "initial_write")
                 
                 buffer_size = 1024 * 1024  # 1MB
                 report_interval = 0.5  # 進捗報告の間隔 (秒)
@@ -187,36 +275,40 @@ def _write_iso_to_windows_device(iso_path, device_path, state, progress_callback
                     # 進捗報告
                     current_time = time.time()
                     if progress_callback and (current_time - state["last_report_time"]) >= report_interval:
-                        # 書き込み進捗を10%から95%の範囲で正規化
+                        # メインの書き込みフェーズにマッピング
+                        phase = state["phases"][2]  # main_write phase
                         raw_progress = state["bytes_written"] / state["iso_size"]
-                        progress_percent = min(95, 10 + math.floor(raw_progress * 85))
+                        
+                        # 30-85%の範囲に正規化
+                        progress_percent = int(phase["start"] + raw_progress * (phase["end"] - phase["start"]))
                         progress_callback(progress_percent, "writing")
                         state["last_report_time"] = current_time
                 
+                # 書き込み完了フラグを設定
+                state["write_completed"] = True
+                
                 # 書き込みバッファをフラッシュ
                 if progress_callback:
-                    progress_callback(99, "flushing")
+                    state["current_phase"] = 3  # フラッシュフェーズへ
+                    progress_callback(state["phases"][3]["start"], "flushing")
                     
                 ctypes.windll.kernel32.FlushFileBuffers(h_device)
+                
+                # 最後のフェイズに移行
+                if progress_callback:
+                    state["current_phase"] = 4  # 最終化フェーズへ
+                    progress_callback(state["phases"][4]["start"], "finalizing")
                 
             finally:
                 # デバイスハンドルを閉じる
                 ctypes.windll.kernel32.CloseHandle(h_device)
         
-        # 完了通知
-        if progress_callback:
-            progress_callback(100, "completed")
-        
         return True
         
     except Exception as e:
-        # エラーを詳細に通知
-        error_message = f"Error writing ISO to device: {str(e)}"
-        if progress_callback:
-            progress_callback(0, f"error: {error_message}")
-        else:
-            print(error_message)
-        raise
+        # エラー発生
+        state["write_completed"] = True
+        raise e
 
 def _prepare_disk_with_diskpart(disk_number, progress_callback=None):
     """DiskPartを使用してディスクを準備する"""

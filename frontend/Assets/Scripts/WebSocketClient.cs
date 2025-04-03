@@ -19,7 +19,8 @@ namespace YakeruUSB
     public class WebSocketClient : MonoBehaviour
     {
         [SerializeField] private string socketUrl = "http://localhost:5000";
-        [SerializeField] private float pollInterval = 1.0f; // 進捗確認の間隔（秒）
+        [SerializeField] private float pollInterval = 2.0f; // ポーリング間隔を2秒に増やす
+        [SerializeField] private bool enablePollingDebugLogs = false; // ポーリングログを制御するフラグ
         
         private bool isConnected = false;
         private bool isPolling = false;
@@ -139,12 +140,33 @@ namespace YakeruUSB
 
                             // イベント発火
                             OnProgressUpdated?.Invoke(progress);
+                            
+                            // 書き込み中（かつstatusがidleでない）場合のみポーリング頻度を上げる
+                            if (progress.status != "idle" && progress.status != "completed" && progress.status != null)
+                            {
+                                pollInterval = 1.0f; // アクティブ時は頻度を上げる
+                            }
+                            else
+                            {
+                                pollInterval = 2.0f; // それ以外は通常の頻度
+                            }
                         }
                     }
                     catch (Exception e)
                     {
-                        Debug.LogError($"Error parsing progress data: {e.Message}");
+                        if (enablePollingDebugLogs)
+                        {
+                            Debug.LogError($"Error parsing progress data: {e.Message}");
+                        }
                     }
+                }
+                else
+                {
+                    if (enablePollingDebugLogs)
+                    {
+                        Debug.LogWarning("Failed to poll progress: " + request.error);
+                    }
+                    pollInterval = 3.0f; // エラー時はさらに間隔を広げる
                 }
             }
         }
@@ -174,12 +196,18 @@ namespace YakeruUSB
             switch (status)
             {
                 case "started": return "準備中...";
+                case "preparing": return "ディスクを準備中...";
+                case "initial_write": return "初期データ書き込み中...";
+                case "writing": return "書き込み中...";
+                case "main_write": return "メインデータ書き込み中...";
+                case "flushing": return "データをディスクに同期中...";
+                case "finalizing": return "書き込みを完了中...";
+                case "completed": return "完了しました";
+                
                 case "opening_device": return "デバイスを開いています...";
                 case "locking_volume": return "ボリュームをロック中...";
                 case "dismounting_volume": return "ボリュームをアンマウント中...";
-                case "writing": return "書き込み中...";
-                case "flushing": return "データをフラッシュ中...";
-                case "completed": return "完了しました";
+                
                 default:
                     if (status.StartsWith("checking_volumes")) return "ボリュームを確認中...";
                     if (status.StartsWith("dismounting_")) return "ドライブをアンマウント中...";

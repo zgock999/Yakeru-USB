@@ -73,6 +73,9 @@ namespace YakeruUSB
         private bool isWritingSuccess = false;
         private string errorMessage = "";
 
+        private float targetProgress = 0f;
+        private bool smoothingActive = false;
+
         private void Start()
         {
             // 初期ステップの設定
@@ -631,17 +634,57 @@ namespace YakeruUSB
 
         private void UpdateProgress(ProgressData progressData)
         {
-            // 進捗バーとステータステキストを更新
-            progressBar.value = progressData.progress / 100f;
+            // 目標進捗値を設定（アニメーションのため）
+            targetProgress = progressData.progress / 100f;
+            
+            // スムージングが有効でない場合は開始
+            if (!smoothingActive)
+            {
+                smoothingActive = true;
+                StartCoroutine(SmoothProgressAnimation());
+            }
+            
+            // 進捗テキストはすぐに更新
             progressText.text = $"{progressData.progress}%";
             statusText.text = WebSocketClient.GetStatusMessage(progressData.status);
             
-            // 完了した場合
+            // 完了したらウィザードを次へ進める
             if (progressData.status == "completed")
             {
+                smoothingActive = false;
                 isWritingSuccess = true;
                 ShowStep(WizardStep.Completion);
             }
+        }
+        
+        // 進捗バーをスムーズにアニメーションさせるためのコルーチン
+        private IEnumerator SmoothProgressAnimation()
+        {
+            // 現在値から目標値へ徐々に近づける
+            while (smoothingActive)
+            {
+                // 現在の進捗値と目標値の差
+                float difference = targetProgress - progressBar.value;
+                
+                // 差が非常に小さい場合はスキップ
+                if (Mathf.Abs(difference) < 0.001f)
+                {
+                    yield return new WaitForSeconds(0.1f);
+                    continue;
+                }
+                
+                // 進捗が増加する場合はより素早く、減少する場合はゆっくりと
+                float step = difference > 0 ? 
+                    Mathf.Min(difference, Time.deltaTime * 0.5f) : 
+                    Mathf.Max(difference, -Time.deltaTime * 0.2f);
+                    
+                progressBar.value += step;
+                
+                yield return null;
+            }
+            
+            // スムージング終了、最終値に設定
+            progressBar.value = targetProgress;
         }
 
         private void OnWriteCompleted()

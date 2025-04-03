@@ -45,33 +45,90 @@ def _list_linux_usb_devices():
                     })
         else:
             # 代替方法: ls -la /dev/sd* で直接デバイスを取得
-            alt_result = subprocess.run(
-                ["ls", "-la", "/dev/sd*"],
-                capture_output=True, text=True
-            )
+            try:
+                alt_result = subprocess.run(
+                    ["ls", "-la", "/dev/sd*"],
+                    capture_output=True, text=True
+                )
+                
+                if alt_result.returncode == 0:
+                    lines = alt_result.stdout.strip().split('\n')
+                    for line in lines:
+                        if "brw-" in line and "/dev/sd" in line:
+                            # /dev/sda, /dev/sdb などのデバイス名を抽出
+                            match = re.search(r'/dev/sd[a-z]+', line)
+                            if match:
+                                dev_path = match.group(0)
+                                # パーティションを除外（/dev/sda1 などは除外）
+                                if not re.search(r'/dev/sd[a-z]+\d+', dev_path):
+                                    # デバイス情報の取得
+                                    name = _get_device_model(dev_path) or "USB Storage"
+                                    size = _get_device_size(dev_path) or "Unknown"
+                                    devices.append({
+                                        "id": dev_path,
+                                        "name": name,
+                                        "size": size,
+                                        "vendor": "Unknown",
+                                        "mountpoint": _get_device_mountpoint(dev_path)
+                                    })
+            except:
+                pass  # sdデバイスがない場合はエラーを無視
             
-            if alt_result.returncode == 0:
-                lines = alt_result.stdout.strip().split('\n')
-                for line in lines:
-                    if "brw-" in line and "/dev/sd" in line:
-                        # /dev/sda, /dev/sdb などのデバイス名を抽出
-                        match = re.search(r'/dev/sd[a-z]+', line)
-                        if match:
-                            dev_path = match.group(0)
-                            # パーティションを除外（/dev/sda1 などは除外）
-                            if not re.search(r'/dev/sd[a-z]+\d+', dev_path):
-                                # デバイス情報の取得
-                                name = _get_device_model(dev_path) or "USB Storage"
-                                size = _get_device_size(dev_path) or "Unknown"
-                                devices.append({
-                                    "id": dev_path,
-                                    "name": name,
-                                    "size": size,
-                                    "vendor": "Unknown",
-                                    "mountpoint": _get_device_mountpoint(dev_path)
-                                })
+            # 仮想マシン環境用: /dev/vd* も検索
+            try:
+                vd_result = subprocess.run(
+                    ["ls", "-la", "/dev/vd*"],
+                    capture_output=True, text=True
+                )
+                
+                if vd_result.returncode == 0:
+                    lines = vd_result.stdout.strip().split('\n')
+                    for line in lines:
+                        if "brw-" in line and "/dev/vd" in line:
+                            match = re.search(r'/dev/vd[a-z]+', line)
+                            if match:
+                                dev_path = match.group(0)
+                                if not re.search(r'/dev/vd[a-z]+\d+', dev_path):
+                                    name = _get_device_model(dev_path) or "Virtual Disk"
+                                    size = _get_device_size(dev_path) or "Unknown"
+                                    devices.append({
+                                        "id": dev_path,
+                                        "name": name,
+                                        "size": size,
+                                        "vendor": "Virtual",
+                                        "mountpoint": _get_device_mountpoint(dev_path)
+                                    })
+            except:
+                pass  # vdデバイスがない場合はエラーを無視
+
+            # nvmeデバイス対応: /dev/nvme* も検索
+            try:
+                nvme_result = subprocess.run(
+                    ["ls", "-la", "/dev/nvme?n?"],
+                    capture_output=True, text=True
+                )
+                
+                if nvme_result.returncode == 0:
+                    lines = nvme_result.stdout.strip().split('\n')
+                    for line in lines:
+                        if "brw-" in line and "/dev/nvme" in line:
+                            match = re.search(r'/dev/nvme\d+n\d+', line)
+                            if match:
+                                dev_path = match.group(0)
+                                if not re.search(r'/dev/nvme\d+n\d+p\d+', dev_path):
+                                    name = _get_device_model(dev_path) or "NVMe Disk"
+                                    size = _get_device_size(dev_path) or "Unknown"
+                                    devices.append({
+                                        "id": dev_path,
+                                        "name": name,
+                                        "size": size,
+                                        "vendor": "NVMe",
+                                        "mountpoint": _get_device_mountpoint(dev_path)
+                                    })
+            except:
+                pass  # nvmeデバイスがない場合はエラーを無視
             
-            # さらに代替方法: /sys/block/sd* ディレクトリを確認
+            # デバイスが検出できない場合は /sys/block を直接確認
             if not devices:
                 for dev_name in os.listdir("/sys/block"):
                     if dev_name.startswith("sd"):
