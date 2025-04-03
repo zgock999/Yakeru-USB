@@ -297,7 +297,7 @@ namespace YakeruUSB
         }
         
         // 進捗バーをスムーズにアニメーションさせるためのコルーチン
-        private IEnumerator SmoothProgressAnimation()
+        private System.Collections.IEnumerator SmoothProgressAnimation()
         {
             // 現在値から目標値へ徐々に近づける
             while (smoothingActive)

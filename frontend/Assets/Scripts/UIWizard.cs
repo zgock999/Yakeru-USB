@@ -251,7 +251,7 @@ namespace YakeruUSB
             StartCoroutine(DelayedQuit());
         }
         
-        private IEnumerator DelayedQuit()
+        private System.Collections.IEnumerator DelayedQuit()
         {
             yield return new WaitForSeconds(0.5f);
             
