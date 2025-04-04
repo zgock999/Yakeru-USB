@@ -1,6 +1,5 @@
 import os
 import time
-import threading
 import shutil
 import glob
 import platform
@@ -8,7 +7,6 @@ import ctypes
 from ctypes import wintypes
 import subprocess
 import tempfile
-import math
 
 def get_iso_files(iso_dir):
     """指定ディレクトリ内のISOファイル一覧を取得"""
@@ -43,51 +41,47 @@ def write_iso_to_device(iso_path, device_path, progress_callback=None):
         if progress_callback:
             progress_callback(0, "started")
             
-        # ISOファイルのサイズを取得
-        iso_size = os.path.getsize(iso_path)
-        
-        # 書き込みの進捗ポイント調整用のパラメータ
-        # 実際のディスク書き込みでは通常ファイルシステムキャッシュにより
-        # 最初は書き込みが高速に見え、その後ディスクへの実際の書き込みが遅くなる
-        progress_phases = [
-            {"name": "preparing", "start": 0, "end": 5, "duration": 2},
-            {"name": "initial_write", "start": 5, "end": 30, "duration": 10},
-            {"name": "main_write", "start": 30, "end": 85, "duration": None}, # 実際の書き込み時間に基づく
-            {"name": "flushing", "start": 85, "end": 95, "duration": 5},
-            {"name": "finalizing", "start": 95, "end": 99, "duration": 3}
-        ]
-            
-        # 進捗状況追跡用の状態変数
-        state = {
-            "bytes_written": 0,
-            "iso_size": iso_size,
-            "start_time": time.time(),
-            "last_report_time": time.time(),
-            "current_phase": 0,
-            "phases": progress_phases
-        }
-        
-        # 非同期で進捗フェーズ更新をシミュレート
-        if progress_callback:
-            simulate_thread = threading.Thread(
-                target=_simulate_progress_phases, 
-                args=(state, progress_callback)
-            )
-            simulate_thread.daemon = True
-            simulate_thread.start()
-        
         # Windowsの場合、特別な処理が必要
         if platform.system() == "Windows":
-            result = _write_iso_to_windows_device(iso_path, device_path, state, progress_callback)
-        else:
-            # Linux/macOSの場合の標準処理
-            result = _write_iso_to_standard_device(iso_path, device_path, state, progress_callback)
+            return _write_iso_to_windows_device(iso_path, device_path, progress_callback)
+        
+        # Linux/macOSの場合の標準処理    
+        with open(iso_path, 'rb') as iso_file:
+            # ISOファイルのサイズを取得
+            iso_file.seek(0, os.SEEK_END)
+            iso_size = iso_file.tell()
+            iso_file.seek(0)
+            
+            with open(device_path, 'wb') as device:
+                buffer_size = 1024 * 1024  # 1MB
+                bytes_written = 0
+                last_report_time = time.time()
+                report_interval = 0.5  # 進捗報告の間隔 (秒)
+                
+                while True:
+                    buffer = iso_file.read(buffer_size)
+                    if not buffer:
+                        break
+                        
+                    device.write(buffer)
+                    bytes_written += len(buffer)
+                    
+                    # 定期的に進捗を報告
+                    current_time = time.time()
+                    if progress_callback and (current_time - last_report_time) >= report_interval:
+                        progress_percent = int(bytes_written * 100 / iso_size) if iso_size > 0 else 0
+                        progress_callback(progress_percent, "writing")
+                        last_report_time = current_time
+                
+                # 書き込みバッファをフラッシュ
+                device.flush()
+                os.fsync(device.fileno())
         
         # 完了を通知
-        if progress_callback and result:
+        if progress_callback:
             progress_callback(100, "completed")
             
-        return result
+        return True
         
     except Exception as e:
         # エラーを通知
@@ -99,94 +93,10 @@ def write_iso_to_device(iso_path, device_path, progress_callback=None):
         # 必要に応じてデバイスを安全に取り外す処理を追加できます
         pass
 
-def _simulate_progress_phases(state, callback):
-    """進捗フェーズを順次シミュレートして表示を滑らかにする"""
-    try:
-        phases = state["phases"]
-        
-        for i, phase in enumerate(phases):
-            if phase["duration"] is None:
-                continue  # 実際の書き込み状況に基づく実時間フェーズはスキップ
-                
-            # フェーズの開始
-            state["current_phase"] = i
-            
-            start_percent = phase["start"]
-            end_percent = phase["end"]
-            duration = phase["duration"]
-            
-            # フェーズ内の進捗を徐々に更新
-            steps = 20  # 更新回数
-            step_time = duration / steps
-            
-            for step in range(steps):
-                # 進捗度を計算（0.0～1.0）
-                progress_ratio = step / steps
-                # 現在のフェーズでの進捗％を計算
-                current_percent = start_percent + (end_percent - start_percent) * progress_ratio
-                # 丸めて整数に
-                percent = int(current_percent)
-                
-                # コールバックで通知
-                callback(percent, phase["name"])
-                
-                # 少し待機
-                time.sleep(step_time)
-                
-                # 実際の書き込みが終わっていれば中断
-                if state.get("write_completed", False):
-                    break
-    except Exception as e:
-        print(f"Error in progress simulation: {e}")
-
-def _write_iso_to_standard_device(iso_path, device_path, state, progress_callback=None):
-    """Linux/macOS環境でISOファイルをデバイスに書き込む"""
-    try:
-        with open(iso_path, 'rb') as iso_file:
-            with open(device_path, 'wb') as device:
-                buffer_size = 1024 * 1024  # 1MB
-                report_interval = 0.5  # 進捗報告の間隔 (秒)
-                
-                while True:
-                    buffer = iso_file.read(buffer_size)
-                    if not buffer:
-                        break
-                        
-                    device.write(buffer)
-                    state["bytes_written"] += len(buffer)
-                    
-                    # 定期的に進捗を報告（実際の書き込み進捗）
-                    current_time = time.time()
-                    if progress_callback and (current_time - state["last_report_time"]) >= report_interval:
-                        # メインの書き込みフェーズにマッピング
-                        phase = state["phases"][2]  # main_write phase
-                        raw_progress = state["bytes_written"] / state["iso_size"]
-                        
-                        # 30-85%の範囲に正規化
-                        progress_percent = int(phase["start"] + raw_progress * (phase["end"] - phase["start"]))
-                        progress_callback(progress_percent, "writing")
-                        state["last_report_time"] = current_time
-                
-                # 書き込みバッファをフラッシュ
-                device.flush()
-                os.fsync(device.fileno())
-        
-        # 書き込み完了フラグを設定
-        state["write_completed"] = True
-        
-        # フェーズの書き込みが終了したことを通知
-        if progress_callback:
-            state["current_phase"] = 3  # フラッシュフェーズへ
-            progress_callback(state["phases"][3]["start"], "flushing")
-        
-        return True
-    except Exception as e:
-        # エラー発生
-        state["write_completed"] = True
-        raise e
-
-def _write_iso_to_windows_device(iso_path, device_path, state, progress_callback=None):
+def _write_iso_to_windows_device(iso_path, device_path, progress_callback=None):
     """Windows環境でISOファイルをデバイスに書き込む"""
+    autoplay_enabled = None  # 自動再生の設定を保持する変数を初期化
+    
     try:
         # デバイス番号を抽出
         if '\\\\?\\PhysicalDrive' in device_path:
@@ -196,12 +106,20 @@ def _write_iso_to_windows_device(iso_path, device_path, state, progress_callback
         else:
             raise ValueError(f"Invalid device path format: {device_path}")
         
+        # Windows自動再生を一時的に無効化
+        if progress_callback:
+            progress_callback(0, "disabling_autoplay")
+        
+        # 自動再生の設定を保存して無効化
+        autoplay_enabled = _disable_windows_autoplay()
+        
         # DiskPartスクリプトを使用してディスクをクリーンアップ
         if not _prepare_disk_with_diskpart(drive_number, progress_callback):
+            # エラー時の処理は上位のエラーハンドリングで行うため、ここでは設定を復元せずにエラーを上げる
             raise OSError(f"Failed to prepare disk {drive_number}")
         
         if progress_callback:
-            progress_callback(5, "opening_device")
+            progress_callback(0, "opening_device")
         
         # 正規化されたデバイスパス
         if not device_path.startswith("\\\\.\\"):
@@ -210,7 +128,6 @@ def _write_iso_to_windows_device(iso_path, device_path, state, progress_callback
             normalized_path = device_path
         
         # Windows APIを直接使用してディスクに書き込む
-        GENERIC_READ = 0x80000000
         GENERIC_WRITE = 0x40000000
         FILE_SHARE_READ = 0x00000001
         FILE_SHARE_WRITE = 0x00000002
@@ -219,6 +136,12 @@ def _write_iso_to_windows_device(iso_path, device_path, state, progress_callback
         
         # ISOファイルを開く
         with open(iso_path, 'rb') as iso_file:
+            # ファイルサイズをseekを使って取得
+            iso_file.seek(0, os.SEEK_END)
+            iso_size = iso_file.tell()
+            iso_file.seek(0)  # ファイルポインタを先頭に戻す
+            print(f"ISO size: {iso_size} bytes")
+            
             # CreateFileWでデバイスを開く
             h_device = ctypes.windll.kernel32.CreateFileW(
                 normalized_path,                   # デバイスパス
@@ -232,17 +155,22 @@ def _write_iso_to_windows_device(iso_path, device_path, state, progress_callback
             
             if h_device == INVALID_HANDLE_VALUE:
                 error_code = ctypes.windll.kernel32.GetLastError()
+                # ここでは設定を復元せず、後のfinallyブロックでリソース解放を一括で行う
                 raise OSError(f"Failed to open device. Error code: {error_code}")
             
             try:
                 # 書き込みを開始
                 if progress_callback:
-                    # 準備フェーズ完了、初期書き込みフェーズに移行
-                    state["current_phase"] = 1
-                    progress_callback(state["phases"][1]["start"], "initial_write")
+                    progress_callback(0, "writing")
                 
                 buffer_size = 1024 * 1024  # 1MB
+                bytes_written = 0
+                last_report_time = time.time()
                 report_interval = 0.5  # 進捗報告の間隔 (秒)
+                
+                # リトライに関する変数
+                max_retries = 10  # 最大リトライ回数を3回から10回に増やす
+                retry_delay = 2.0  # リトライ間隔を1.0秒から2.0秒に増やす
                 
                 while True:
                     buffer = iso_file.read(buffer_size)
@@ -257,58 +185,155 @@ def _write_iso_to_windows_device(iso_path, device_path, state, progress_callback
                     bytes_to_write = wintypes.DWORD(buffer_len)
                     bytes_written_ptr = wintypes.DWORD(0)
                     
-                    # WriteFileでデバイスに書き込み
-                    success = ctypes.windll.kernel32.WriteFile(
-                        h_device,                  # デバイスハンドル
-                        c_buffer,                  # データバッファ
-                        bytes_to_write,            # 書き込むバイト数
-                        ctypes.byref(bytes_written_ptr), # 書き込まれたバイト数
-                        None                       # オーバーラップド構造体
-                    )
+                    # 書き込み処理にリトライロジックを追加
+                    retry_count = 0
+                    write_success = False
+                    last_error_code = 0
                     
-                    if not success:
-                        error_code = ctypes.windll.kernel32.GetLastError()
-                        raise OSError(f"Write failed. Error code: {error_code}")
+                    while retry_count <= max_retries and not write_success:
+                        if retry_count > 0:
+                            # リトライの場合は少し待機
+                            time.sleep(retry_delay)
+                            print(f"Retrying write operation (attempt {retry_count}/{max_retries})")
+                            if progress_callback:
+                                progress_callback(int(bytes_written * 100 / iso_size) if iso_size > 0 else 0, 
+                                                 f"writing (retry {retry_count}/{max_retries})")
+                        
+                        # WriteFileでデバイスに書き込み
+                        success = ctypes.windll.kernel32.WriteFile(
+                            h_device,                  # デバイスハンドル
+                            c_buffer,                  # データバッファ
+                            bytes_to_write,            # 書き込むバイト数
+                            ctypes.byref(bytes_written_ptr), # 書き込まれたバイト数
+                            None                       # オーバーラップド構造体
+                        )
+                        
+                        if success:
+                            write_success = True
+                        else:
+                            # エラーコードを取得
+                            last_error_code = ctypes.windll.kernel32.GetLastError()
+                            # エラーコード1のみリトライ（それ以外はリトライしない）
+                            if last_error_code != 1:
+                                break
+                            retry_count += 1
                     
-                    state["bytes_written"] += bytes_written_ptr.value
+                    # すべてのリトライが失敗した場合
+                    if not write_success:
+                        if last_error_code == 1:
+                            error_message = f"Write failed after {max_retries} retries. Error code: 1 (Write protected media or permission issue)"
+                        else:
+                            error_message = f"Write failed. Error code: {last_error_code}"
+                        
+                        # ログに出力してからエラーを投げる
+                        print(error_message)
+                        raise OSError(error_message)
+                    
+                    bytes_written += bytes_written_ptr.value
+                    print(f"Bytes written: {bytes_written}/{iso_size} ({bytes_written * 100 / iso_size:.2f}%)")
                     
                     # 進捗報告
                     current_time = time.time()
-                    if progress_callback and (current_time - state["last_report_time"]) >= report_interval:
-                        # メインの書き込みフェーズにマッピング
-                        phase = state["phases"][2]  # main_write phase
-                        raw_progress = state["bytes_written"] / state["iso_size"]
-                        
-                        # 30-85%の範囲に正規化
-                        progress_percent = int(phase["start"] + raw_progress * (phase["end"] - phase["start"]))
+                    if progress_callback and (current_time - last_report_time) >= report_interval:
+                        progress_percent = int(bytes_written * 100 / iso_size) if iso_size > 0 else 0
                         progress_callback(progress_percent, "writing")
-                        state["last_report_time"] = current_time
-                
-                # 書き込み完了フラグを設定
-                state["write_completed"] = True
+                        last_report_time = current_time
                 
                 # 書き込みバッファをフラッシュ
                 if progress_callback:
-                    state["current_phase"] = 3  # フラッシュフェーズへ
-                    progress_callback(state["phases"][3]["start"], "flushing")
-                    
-                ctypes.windll.kernel32.FlushFileBuffers(h_device)
+                    progress_callback(99, "flushing")  # 99%でフラッシュ中と表示
                 
-                # 最後のフェイズに移行
-                if progress_callback:
-                    state["current_phase"] = 4  # 最終化フェーズへ
-                    progress_callback(state["phases"][4]["start"], "finalizing")
+                flush_success = ctypes.windll.kernel32.FlushFileBuffers(h_device)
+                if not flush_success:
+                    flush_error = ctypes.windll.kernel32.GetLastError()
+                    print(f"Warning: FlushFileBuffers returned error: {flush_error}")
                 
             finally:
-                # デバイスハンドルを閉じる
+                # デバイスハンドルを閉じる - 複数回呼ばれないようにfinallyブロックに移動
                 ctypes.windll.kernel32.CloseHandle(h_device)
+                # ここでは自動再生設定を復元しない
+        
+        # 書き込みが完了してISO処理が終わってから設定を元に戻す
+        if autoplay_enabled is not None:
+            print("書き込み完了後に自動再生の設定を復元します")
+            _restore_windows_autoplay(autoplay_enabled)
+            # 復元後に参照をクリアして複数回呼び出しを防ぐ
+            autoplay_enabled = None
+        
+        # 完了通知
+        if progress_callback:
+            progress_callback(100, "completed")
         
         return True
         
     except Exception as e:
-        # エラー発生
-        state["write_completed"] = True
-        raise e
+        # エラーを通知
+        if progress_callback:
+            progress_callback(0, f"error: {str(e)}")
+        raise
+    finally:
+        # 例外発生時も含めて、ここで必ずautoplayの設定を元に戻す
+        if autoplay_enabled is not None:
+            print("例外発生時または後処理として自動再生の設定を復元します")
+            _restore_windows_autoplay(autoplay_enabled)
+
+def _disable_windows_autoplay():
+    """Windows自動再生を一時的に無効化し、元の設定を返す"""
+    if platform.system() != "Windows":
+        return None  # Windowsでない場合は何もしない
+        
+    try:
+        import winreg
+        
+        # 現在の自動再生設定を取得（復元用）
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers", 0, winreg.KEY_READ)
+            current_value = winreg.QueryValueEx(key, "DisableAutoplay")[0]
+            winreg.CloseKey(key)
+        except:
+            current_value = 0  # デフォルトは有効(0)
+            
+        # 自動再生を無効化
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers", 0, winreg.KEY_WRITE)
+        winreg.SetValueEx(key, "DisableAutoplay", 0, winreg.REG_DWORD, 1)  # 1=無効化
+        winreg.CloseKey(key)
+        
+        # 設定変更を反映させるため、エクスプローラーに通知
+        try:
+            ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)  # SHCNE_ASSOCCHANGED
+        except:
+            pass
+            
+        print("Windows Autoplay disabled temporarily")
+        return current_value
+        
+    except Exception as e:
+        print(f"Failed to disable Windows Autoplay: {e}")
+        return None
+
+def _restore_windows_autoplay(previous_value):
+    """Windows自動再生の設定を元に戻す"""
+    if platform.system() != "Windows" or previous_value is None:
+        return
+        
+    try:
+        import winreg
+        
+        # 自動再生設定を元に戻す
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Explorer\AutoplayHandlers", 0, winreg.KEY_WRITE)
+        winreg.SetValueEx(key, "DisableAutoplay", 0, winreg.REG_DWORD, previous_value)
+        winreg.CloseKey(key)
+        
+        # 設定変更を反映させるため、エクスプローラーに通知
+        try:
+            ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)  # SHCNE_ASSOCCHANGED
+        except:
+            pass
+            
+        print(f"Windows Autoplay setting restored to previous state: {previous_value}")
+        
+    except Exception as e:
+        print(f"Failed to restore Windows Autoplay setting: {e}")
 
 def _prepare_disk_with_diskpart(disk_number, progress_callback=None):
     """DiskPartを使用してディスクを準備する"""
@@ -324,7 +349,7 @@ def _prepare_disk_with_diskpart(disk_number, progress_callback=None):
             script_path = script.name
         
         if progress_callback:
-            progress_callback(2, "cleaning_disk")
+            progress_callback(0, "cleaning_disk")
             
         # DiskPartを実行
         process = subprocess.Popen(
@@ -346,7 +371,7 @@ def _prepare_disk_with_diskpart(disk_number, progress_callback=None):
             return False
         
         if progress_callback:
-            progress_callback(3, "disk_prepared")
+            progress_callback(0, "disk_prepared")
             
         # 操作の成功後、少し待機（ディスクが再スキャンされるのを待つ）
         time.sleep(2)
@@ -355,9 +380,6 @@ def _prepare_disk_with_diskpart(disk_number, progress_callback=None):
     except Exception as e:
         print(f"Error preparing disk with DiskPart: {e}")
         return False
-
-# 既存の_dismount_windows_volumes関数はもう使用しないため、残してもよいが、
-# 上記の_prepare_disk_with_diskpart関数を優先して使用する
 
 # テスト実行用
 if __name__ == "__main__":

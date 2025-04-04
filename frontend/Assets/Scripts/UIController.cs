@@ -53,6 +53,10 @@ namespace YakeruUSB
             progressPanel.SetActive(false);
             messagePanel.SetActive(false);
             
+            // 進捗スライダーを0にリセット
+            progressSlider.value = 0;
+            progressText.text = "0%";
+            
             // ボタンイベントの設定
             refreshISOsButton.onClick.AddListener(OnRefreshISOsClicked);
             refreshDevicesButton.onClick.AddListener(OnRefreshDevicesClicked);
@@ -262,16 +266,29 @@ namespace YakeruUSB
             progressPanel.SetActive(true);
             progressSlider.value = 0;
             progressText.text = "0%";
-            statusText.text = "Writing started...";
+            statusText.text = "準備中..."; // より適切な初期メッセージ
             
             // 書き込み中はボタンを無効化
             writeButton.interactable = false;
+            
+            // 進捗値をリセット
+            targetProgress = 0f;
+            smoothingActive = false;
         }
 
         private void UpdateProgress(ProgressData progressData)
         {
+            // 書き込み中でなければ進捗更新を無視（起動時の過去の状態反映を防止）
+            if (!ISOManager.Instance.IsWriting && progressData.status != "starting")
+            {
+                return;
+            }
+            
             // 進捗情報の更新
             progressPanel.SetActive(true);
+            
+            // 状態に応じてUI表示を調整
+            UpdateStatusDisplay(progressData);
             
             // 目標進捗値を設定（アニメーションのため）
             targetProgress = progressData.progress / 100f;
@@ -286,9 +303,6 @@ namespace YakeruUSB
             // 進捗テキストはすぐに更新
             progressText.text = $"{progressData.progress}%";
             
-            // 翻訳されたステータスメッセージを表示
-            statusText.text = WebSocketClient.GetStatusMessage(progressData.status);
-            
             // 完了またはエラー時はスムージングを無効化
             if (progressData.status == "completed" || progressData.status.StartsWith("error"))
             {
@@ -296,6 +310,24 @@ namespace YakeruUSB
             }
         }
         
+        // 状態に応じたステータス表示の更新
+        private void UpdateStatusDisplay(ProgressData progressData)
+        {
+            string translatedStatus = WebSocketClient.GetStatusMessage(progressData.status);
+            
+            // 進捗値の補正を行わず、バックエンドからの値をそのまま使用
+            
+            // 95%以上で特別メッセージを表示するロジックは保持
+            if (progressData.progress >= 95 && progressData.status != "completed")
+            {
+                statusText.text = $"{translatedStatus} (しばらくお待ちください)";
+            }
+            else
+            {
+                statusText.text = translatedStatus;
+            }
+        }
+
         // 進捗バーをスムーズにアニメーションさせるためのコルーチン
         private System.Collections.IEnumerator SmoothProgressAnimation()
         {
@@ -314,9 +346,8 @@ namespace YakeruUSB
                 
                 // 進捗が増加する場合はより素早く、減少する場合はゆっくりと
                 float step = difference > 0 ? 
-                    Mathf.Min(difference, Time.deltaTime * 0.5f) : 
-                    Mathf.Max(difference, -Time.deltaTime * 0.2f);
-                    
+                                Mathf.Min(difference, Time.deltaTime * 0.5f) : 
+                                Mathf.Max(difference, -Time.deltaTime * 0.2f);
                 progressSlider.value += step;
                 
                 yield return null;
@@ -339,17 +370,44 @@ namespace YakeruUSB
             
             // 書き込みボタンの状態を更新
             UpdateWriteButton();
+            
+            // 書き込み完了後に状態をリセット
+            ISOManager.Instance.ResetWritingState();
         }
 
         private void HideProgressPanel()
         {
             progressPanel.SetActive(false);
+            
+            // 選択状態もリセットする
+            ISOManager.Instance.ClearSelectedDevice();
+            UpdateSelectedDevice();
         }
 
         private void ShowError(string error)
         {
-            ShowMessage($"Error: {error}");
-            
+            // エラーコード1（書き込み失敗）の場合は詳細な対処法を表示
+            if (error.Contains("1") || error.Contains("write_failed"))
+            {
+                ShowMessage("エラー: 書き込みに失敗しました (エラーコード 1)\n\n" +
+                            "確認事項:\n" +
+                            "・USBメディアが書き込み禁止になっていないか\n" +
+                            "・USBメディアが正常に接続されているか\n" +
+                            "・USBポートを変更してみる\n" +
+                            "・別のUSBメディアを試す");
+            }
+            // 権限エラーの場合
+            else if (error.Contains("permission"))
+            {
+                ShowMessage("エラー: 権限が不足しています\n\n" +
+                            "このアプリを管理者権限で実行してください");
+            }
+            // その他のエラー
+            else
+            {
+                ShowMessage($"エラー: {WebSocketClient.GetStatusMessage(error)}");
+            }
+
             if (ISOManager.Instance.IsWriting)
             {
                 // エラーが発生した場合は進捗パネルを非表示
@@ -398,7 +456,6 @@ namespace YakeruUSB
         private System.Collections.IEnumerator DelayedQuit()
         {
             yield return new WaitForSeconds(0.5f);
-            
 #if UNITY_EDITOR
             // エディタの場合
             UnityEditor.EditorApplication.isPlaying = false;
@@ -413,6 +470,16 @@ namespace YakeruUSB
         {
             messagePanel.SetActive(true);
             messageText.text = message;
+            
+            // エラーメッセージの場合、フォントサイズを小さく調整して全体が見えるようにする
+            if (message.StartsWith("エラー:"))
+            {
+                messageText.fontSize = 20; // エラーメッセージは詳細情報が多いので小さく
+            }
+            else
+            {
+                messageText.fontSize = 24; // 通常のメッセージは標準サイズ
+            }
             
             // 確認ボタンが必要な場合は表示
             if (showConfirmButton && messagePanel.transform.Find("ConfirmButton") != null)

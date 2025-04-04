@@ -9,13 +9,14 @@ namespace YakeruUSB
 {
     /// <summary>
     /// ウィザード形式でUSB書き込みを進めるUIコントローラ
+    /// 関連ドキュメント: /docs/ui-architecture.md
     /// </summary>
     public class UIWizard : MonoBehaviour
     {
         [Header("ウィザードステップパネル")]
         [SerializeField] private GameObject titlePanel;
         [SerializeField] private GameObject isoSelectionPanel;
-        [SerializeField] private GameObject usbSelectionPanel;
+        [SerializeField] private GameObject usbSelectionPanel; // これを維持、DeviceSelectionPanelは不要
         [SerializeField] private GameObject confirmationPanel;
         [SerializeField] private GameObject writingPanel;
         [SerializeField] private GameObject completionPanel;
@@ -41,22 +42,28 @@ namespace YakeruUSB
         [SerializeField] private Slider progressBar;
         [SerializeField] private TextMeshProUGUI progressText;
         [SerializeField] private TextMeshProUGUI statusText;
+        [SerializeField] private TextMeshProUGUI writingTitleText;
 
         [Header("完了パネル")]
         [SerializeField] private TextMeshProUGUI completionMessageText;
+        [SerializeField] private TextMeshProUGUI resultMessageText;
         [SerializeField] private Image completionIcon;
         [SerializeField] private Sprite successIcon;
         [SerializeField] private Sprite errorIcon;
+        [SerializeField] private TextMeshProUGUI resultTitleText;
 
         [Header("ナビゲーションボタン")]
         [SerializeField] private Button backButton;
         [SerializeField] private Button nextButton;
-        [SerializeField] private Button startButton; // タイトル画面のスタートボタン
-        [SerializeField] private Button writeButton; // 確認画面の書き込みボタン
+        [SerializeField] private Button startButton;
+        [SerializeField] private Button writeButton;
         [SerializeField] private Button refreshIsoButton;
         [SerializeField] private Button refreshUsbButton;
-        [SerializeField] private Button finishButton; // 完了画面のタイトルに戻るボタン
-        [SerializeField] private Button quitButton; // 終了ボタン
+        [SerializeField] private Button finishButton;
+        [SerializeField] private Button quitButton;
+
+        // 画面コントローラへの参照を追加
+        [SerializeField] private UIWizardScreenController screenController;
 
         // ウィザードの現在のステップ
         private enum WizardStep
@@ -78,12 +85,35 @@ namespace YakeruUSB
 
         private void Start()
         {
+            // まず最初に、ISOManagerの状態を完全にリセット
+            if (ISOManager.Instance != null)
+            {
+                ISOManager.Instance.ResetAllState();
+            }
+            
+            // WebSocketClientの状態もリセット
+            if (WebSocketClient.Instance != null)
+            {
+                WebSocketClient.Instance.ResetConnectionState();
+                WebSocketClient.Instance.ResetProgressState();
+            }
+            
+            // 画面コントローラの取得またはチェック
+            if (screenController == null)
+            {
+                screenController = GetComponentInChildren<UIWizardScreenController>();
+                if (screenController == null)
+                {
+                    Debug.LogError("UIWizardScreenController not found. Please attach it to a child GameObject.");
+                }
+            }
+
             // 初期ステップの設定
             ShowStep(WizardStep.Title);
 
             // ボタンのイベントハンドラを設定
             SetupButtonHandlers();
-            
+                        
             // マネージャーからのイベントを購読
             SubscribeToEvents();
 
@@ -132,14 +162,63 @@ namespace YakeruUSB
             backButton.onClick.AddListener(OnBackButtonClicked);
             nextButton.onClick.AddListener(OnNextButtonClicked);
             writeButton.onClick.AddListener(OnWriteButtonClicked);
-            finishButton.onClick.AddListener(() => ShowStep(WizardStep.Title));
+            
+            // 完了ボタンの処理を変更
+            finishButton.onClick.RemoveAllListeners(); // 既存のリスナーを削除
+            finishButton.onClick.AddListener(() => {
+                // 状態をリセットしてからタイトル画面に遷移
+                StartCoroutine(ResetStateAndShowTitle());
+            });
             
             // 更新ボタン
             refreshIsoButton.onClick.AddListener(() => ISOManager.Instance.RefreshISOFiles());
             refreshUsbButton.onClick.AddListener(() => ISOManager.Instance.RefreshUSBDevices());
-            
+               
             // 終了ボタン
             quitButton.onClick.AddListener(OnQuitButtonClicked);
+        }
+
+        // 状態のリセットとタイトル画面遷移を順番に実行するコルーチン
+        private IEnumerator ResetStateAndShowTitle()
+        {
+            // まずバックエンドの状態をリセット
+            yield return StartCoroutine(APIClient.Instance.ResetBackendStatus());
+            
+            // UIとマネージャーの状態をリセット
+            ResetWizardState();
+            
+            // 定期更新を明示的に再開する
+            if (ISOManager.Instance != null)
+            {
+                // 書き込み状態をリセットすることで、定期更新も再開される
+                ISOManager.Instance.ResetAllState();
+            }
+            
+            // タイトル画面に遷移
+            ShowStep(WizardStep.Title);
+        }
+
+        // 書き込みプロセス完了後のウィザード状態をリセットするメソッド
+        private void ResetWizardState()
+        {
+            // 選択状態をリセット
+            if (ISOManager.Instance != null)
+            {
+                ISOManager.Instance.ClearSelectedDevice();
+                ISOManager.Instance.ClearSelectedISO(); // ISOも明示的にリセット
+                
+                // 書き込み状態をリセット - ここで行う
+                ISOManager.Instance.ResetWritingState();
+            }
+            
+            // 進捗バーなどのUI状態をリセット
+            if (progressBar != null) progressBar.value = 0;
+            if (progressText != null) progressText.text = "0%";
+            if (statusText != null) statusText.text = "";
+            
+            // 完了フラグもリセット
+            isWritingSuccess = false;
+            errorMessage = "";
         }
 
         private void OnBackButtonClicked()
@@ -187,9 +266,23 @@ namespace YakeruUSB
         {
             if (currentStep == WizardStep.Confirmation)
             {
-                ISOManager.Instance.StartWriting();
+                // 変更: 書き込み開始とUI遷移の順序を変更
+                // まず画面遷移を行い、その後書き込み開始処理を実行
                 ShowStep(WizardStep.Writing);
+                
+                // 書き込み開始処理をわずかに遅延させる（UIの安定のため）
+                StartCoroutine(StartWritingWithDelay());
             }
+        }
+
+        // 短い遅延後に書き込みを開始するコルーチン
+        private IEnumerator StartWritingWithDelay()
+        {
+            // UIが更新される時間を確保するため、1フレーム待機
+            yield return null;
+            
+            // 書き込み開始
+            ISOManager.Instance.StartWriting();
         }
 
         private void OnQuitButtonClicked()
@@ -234,7 +327,7 @@ namespace YakeruUSB
                     cancelButton.onClick.RemoveAllListeners();
                     cancelButton.onClick.AddListener(() => ShowStep(currentStep));
                 }
-                
+                   
                 HideAllStepPanels();
                 completionPanel.SetActive(true);
             }
@@ -247,7 +340,7 @@ namespace YakeruUSB
             {
                 WebSocketClient.Instance.Disconnect();
             }
-            
+                
             StartCoroutine(DelayedQuit());
         }
         
@@ -276,7 +369,7 @@ namespace YakeruUSB
             // ナビゲーションボタンの状態設定
             UpdateNavigationButtons();
             
-            // 現在のステップに応じたパネルを表示
+            // 現在のステップに応じたパネルを表示と、画面コントローラも連動
             switch (step)
             {
                 case WizardStep.Title:
@@ -301,6 +394,11 @@ namespace YakeruUSB
                 case WizardStep.Writing:
                     writingPanel.SetActive(true);
                     InitializeWritingUI();
+                    // 画面コントローラを書き込み画面に遷移
+                    if (screenController != null)
+                    {
+                        screenController.TransitionToWritingScreen();
+                    }
                     break;
                     
                 case WizardStep.Completion:
@@ -347,7 +445,7 @@ namespace YakeruUSB
             
             // 書き込みボタンは確認画面でのみ表示
             writeButton.gameObject.SetActive(currentStep == WizardStep.Confirmation);
-            
+               
             // 終了/タイトルに戻るボタンは完了画面でのみ表示
             finishButton.gameObject.SetActive(currentStep == WizardStep.Completion);
         }
@@ -375,7 +473,7 @@ namespace YakeruUSB
                 text.fontSize = 14;
                 text.alignment = TextAlignmentOptions.Center;
                 text.color = Color.white;
-                
+                   
                 RectTransform rect = emptyItem.GetComponent<RectTransform>();
                 rect.sizeDelta = new Vector2(300, 60);
             }
@@ -433,7 +531,7 @@ namespace YakeruUSB
                 text.fontSize = 14;
                 text.alignment = TextAlignmentOptions.Center;
                 text.color = Color.white;
-                
+                   
                 RectTransform rect = emptyItem.GetComponent<RectTransform>();
                 rect.sizeDelta = new Vector2(300, 60);
             }
@@ -611,8 +709,14 @@ namespace YakeruUSB
                 completionIcon.sprite = errorIcon;
             }
             
-            // 完了時のUI用のボタンの設定
+            // 完了時のUI用のボタンの設定 - 必ず表示する
             finishButton.gameObject.SetActive(true);
+            
+            // 結果タイトルの設定（追加）
+            if (resultTitleText != null)
+            {
+                resultTitleText.text = isWritingSuccess ? "書き込み完了" : "書き込み失敗";
+            }
             
             // 確認ボタンやキャンセルボタンが表示されていたら非表示にする
             Transform confirmButtonTransform = completionPanel.transform.Find("ConfirmQuitButton");
@@ -632,8 +736,29 @@ namespace YakeruUSB
 
         #region 書き込み関連イベント処理
 
+        // 画面コントローラ経由で進捗を更新
         private void UpdateProgress(ProgressData progressData)
         {
+            // 画面コントローラが存在する場合は、そちらに進捗更新を委譲する
+            if (screenController != null)
+            {
+                screenController.UpdateProgress(progressData);
+                return; // ここで早期リターンして重複処理を避ける
+            }
+            
+            // screenController がない場合のフォールバック処理（以下は既存のコード）
+            // 書き込み中でなければ進捗更新を無視
+            if (!ISOManager.Instance.IsWriting && progressData.status != "starting")
+            {
+                return;
+            }
+            
+            // 進捗情報の更新
+            writingPanel.SetActive(true);
+            
+            // 状態に応じたUI表示を調整
+            UpdateStatusDisplay(progressData);
+            
             // 目標進捗値を設定（アニメーションのため）
             targetProgress = progressData.progress / 100f;
             
@@ -646,19 +771,39 @@ namespace YakeruUSB
             
             // 進捗テキストはすぐに更新
             progressText.text = $"{progressData.progress}%";
-            statusText.text = WebSocketClient.GetStatusMessage(progressData.status);
             
-            // 完了したらウィザードを次へ進める
+            // 完了時は完了画面に移行
             if (progressData.status == "completed")
             {
                 smoothingActive = false;
-                isWritingSuccess = true;
-                ShowStep(WizardStep.Completion);
+                ShowCompletionScreen();
+            }
+            // エラー時はエラー画面に移行
+            else if (progressData.status.StartsWith("error"))
+            {
+                smoothingActive = false;
+                ShowErrorScreen(progressData.status);
+            }
+        }
+
+        // 状態に応じたステータス表示の更新
+        private void UpdateStatusDisplay(ProgressData progressData)
+        {
+            string translatedStatus = WebSocketClient.GetStatusMessage(progressData.status);
+            
+            // 95%以上で特別メッセージを表示するロジックは保持
+            if (progressData.progress >= 95 && progressData.status != "completed")
+            {
+                statusText.text = $"{translatedStatus} (しばらくお待ちください)";
+            }
+            else
+            {
+                statusText.text = translatedStatus;
             }
         }
         
         // 進捗バーをスムーズにアニメーションさせるためのコルーチン
-        private IEnumerator SmoothProgressAnimation()
+        private System.Collections.IEnumerator SmoothProgressAnimation()
         {
             // 現在値から目標値へ徐々に近づける
             while (smoothingActive)
@@ -686,9 +831,95 @@ namespace YakeruUSB
             // スムージング終了、最終値に設定
             progressBar.value = targetProgress;
         }
+        
+        // 書き込み完了画面へ移動
+        private void ShowCompletionScreen()
+        {
+            // 書き込み成功時の処理
+            isWritingSuccess = true;
+            ShowStep(WizardStep.Completion);
+        }
+
+        private void OnWriteStarted()
+        {
+            Debug.Log("Write process started - periodic updates paused");
+            
+            // 選択画面を非表示にする
+            if (usbSelectionPanel != null) {
+                usbSelectionPanel.SetActive(false);
+            }
+            
+            // 書き込み画面を表示
+            writingPanel.SetActive(true);
+            
+            // 進捗をリセット
+            progressBar.value = 0;
+            progressText.text = "0%";
+            statusText.text = "準備中..."; // 初期メッセージをより明確に
+            
+            // 進捗値をリセット
+            targetProgress = 0f;
+            smoothingActive = false;
+            
+            // タイトル更新
+            if (writingTitleText != null) {
+                writingTitleText.text = "書き込み中...";
+            }
+        }
+
+        private void ShowErrorScreen(string errorStatus)
+        {
+            // 書き込み画面を非表示
+            writingPanel.SetActive(false);
+            
+            // 結果画面を表示 - resultPanel の参照を completionPanel に変更
+            completionPanel.SetActive(true);
+            
+            // エラー内容に応じたメッセージを表示
+            if (resultTitleText != null && resultMessageText != null) {
+                if (errorStatus.Contains("1") || errorStatus.Contains("write_failed"))
+                {
+                    resultTitleText.text = "書き込みに失敗しました";
+                    resultMessageText.text = "USBメディアが書き込み禁止になっていないか確認してください。\n" +
+                                            "また、USBメディアが正常に接続されているか確認してください。\n" +
+                                            "別のUSBポートや別のUSBメディアを試してみることも有効です。";
+                }
+                else if (errorStatus.Contains("permission"))
+                {
+                    resultTitleText.text = "権限エラー";
+                    resultMessageText.text = "書き込みに必要な権限がありません。\n" +
+                                            "このアプリを管理者権限で実行してください。";
+                }
+                else
+                {
+                    resultTitleText.text = "エラーが発生しました";
+                    resultMessageText.text = WebSocketClient.GetStatusMessage(errorStatus);
+                }
+            }
+            
+            // ボタンのテキストを設定
+            if (finishButton != null && finishButton.GetComponentInChildren<TextMeshProUGUI>() != null) {
+                finishButton.GetComponentInChildren<TextMeshProUGUI>().text = "終了";
+            }
+            
+            // アイコンをエラー表示に
+            if (completionIcon != null && errorIcon != null)
+            {
+                completionIcon.sprite = errorIcon;
+            }
+        }
 
         private void OnWriteCompleted()
         {
+            // 画面コントローラが存在する場合は、完了処理を委譲
+            if (screenController != null)
+            {
+                // UIWizardScreenControllerの完了処理を呼び出す
+                screenController.HandleWriteCompleted();
+                return; // 重複処理を避けるため早期リターン
+            }
+            
+            // 以下は従来の処理（screenControllerがない場合のフォールバック）
             isWritingSuccess = true;
             ShowStep(WizardStep.Completion);
             
@@ -698,6 +929,15 @@ namespace YakeruUSB
 
         private void OnWriteError(string error)
         {
+            // 画面コントローラが存在する場合は、エラー処理を委譲
+            if (screenController != null)
+            {
+                // UIWizardScreenControllerのエラー処理を呼び出す
+                screenController.HandleWriteError(error);
+                return; // 重複処理を避けるため早期リターン
+            }
+            
+            // 以下は従来の処理（screenControllerがない場合のフォールバック）
             isWritingSuccess = false;
             errorMessage = error;
             ShowStep(WizardStep.Completion);
