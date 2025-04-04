@@ -221,6 +221,20 @@ def reset_status():
     
     print("Status explicitly reset by frontend request")
     
+    # Linux環境では、デバイスの状態をリセットするため、システムコマンドを実行
+    if platform.system() == "Linux":
+        try:
+            # syncを実行してすべてのバッファをフラッシュ
+            subprocess.run(["sync"], check=True)
+            print("System buffers flushed with sync command")
+            
+            # USBサブシステムをリセットするためのudevadmコマンド実行
+            subprocess.run(["udevadm", "trigger"], check=False)
+            subprocess.run(["udevadm", "settle"], check=False)
+            print("USB subsystem refreshed with udevadm")
+        except Exception as e:
+            print(f"Warning: Failed to reset device state: {e}")
+    
     return jsonify({"status": "Status reset successfully"})
 
 # 進捗コールバック関数を修正

@@ -6,7 +6,7 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/Scenes/SampleWriter.unity
-    guid: 2e7ea6de37310a54b8a165c0429b0d51
+    path: Assets/Scenes/WizardWriter.unity
+    guid: a11e4756bfbd4784cac7b9f4477c2570
   m_configObjects: {}
   m_UseUCBPForAssetBundles: 0

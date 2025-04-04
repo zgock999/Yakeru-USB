@@ -72,6 +72,18 @@ def _write_iso_to_linux_device(iso_path, device_path, progress_callback=None):
                 
             if progress_callback:
                 progress_callback(0, "disk_prepared")
+            
+            # Linux環境では、前回の書き込み後にカーネルがキャッシュを保持している可能性があるため
+            # デバイスを再オープンする前に強制的にsyncを実行し、IO状態をリセットする
+            try:
+                subprocess.run(["sync"], check=True)
+                # ブロックデバイスのキャッシュをクリア
+                if os.path.exists('/sbin/blockdev'):
+                    subprocess.run(["blockdev", "--flushbufs", device_path], check=False)
+                # 少し待機して、カーネルがデバイスの状態を更新する時間を確保
+                time.sleep(1)
+            except Exception as e:
+                print(f"Warning: Device sync issue: {e}")
         
         # ISOファイルを開く
         with open(iso_path, 'rb') as iso_file:
@@ -150,8 +162,27 @@ def _write_iso_to_linux_device(iso_path, device_path, progress_callback=None):
         
         # 完了を通知
         if progress_callback:
-            progress_callback(100, "completed")
+            progress_callback(99, "finalizing")  # 完了前に最終化ステップを追加
             
+            # 書き込み完了後、Linux環境ではデバイスファイル記述子がクローズされても
+            # カーネルバッファが完全にフラッシュされるまで時間がかかるため
+            # syncコマンドを3回実行して確実にディスク同期を行う
+            for i in range(3):
+                try:
+                    subprocess.run(["sync"], check=True)
+                    time.sleep(0.5)
+                except Exception as e:
+                    print(f"Warning: Sync issue on attempt {i+1}: {e}")
+
+            # デバイス状態の更新を明示的にカーネルに要求
+            try:
+                if os.path.exists('/sbin/hdparm'):
+                    subprocess.run(["/sbin/hdparm", "-z", device_path], check=False)
+            except Exception as e:
+                print(f"Warning: Failed to refresh device: {e}")
+                
+            progress_callback(100, "completed")
+        
         return True
         
     except Exception as e:
@@ -187,7 +218,8 @@ def _ensure_device_not_mounted(device_path, progress_callback=None):
                 
             for partition in mounted_partitions:
                 print(f"Unmounting {partition}...")
-                subprocess.run(["umount", partition], check=False)
+                # 強制オプションを追加
+                subprocess.run(["umount", "-f", partition], check=False)
                 
             # アンマウント後に再確認
             time.sleep(1)
@@ -195,7 +227,25 @@ def _ensure_device_not_mounted(device_path, progress_callback=None):
             for partition in mounted_partitions:
                 if partition in mount_output:
                     print(f"Failed to unmount {partition}")
-                    return False
+                    # 最後の手段: lazily unmountを試行
+                    try:
+                        subprocess.run(["umount", "-l", partition], check=False)
+                        time.sleep(0.5)
+                    except Exception as e:
+                        print(f"Error during lazy unmount: {e}")
+            
+            # 再確認
+            time.sleep(0.5)
+            mount_output = subprocess.check_output(["mount"], universal_newlines=True)
+            still_mounted = False
+            for partition in mounted_partitions:
+                if partition in mount_output:
+                    still_mounted = True
+                    print(f"Partition {partition} is still mounted")
+            
+            # それでも問題がある場合は続行するが警告を出す
+            if still_mounted:
+                print("WARNING: Some partitions could not be unmounted. Continuing anyway...")
         
         return True
         
