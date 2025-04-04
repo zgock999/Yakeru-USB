@@ -65,6 +65,7 @@ def write_iso_to_device(iso_path, device_path, progress_callback=None):
                         
                     device.write(buffer)
                     bytes_written += len(buffer)
+                    print(f"Bytes written: {bytes_written}/{iso_size} ({bytes_written * 100 / iso_size:.2f}%)")
                     
                     # 定期的に進捗を報告
                     current_time = time.time()
