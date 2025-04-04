@@ -45,12 +45,47 @@ def write_iso_to_device(iso_path, device_path, progress_callback=None):
         if platform.system() == "Windows":
             return _write_iso_to_windows_device(iso_path, device_path, progress_callback)
         
-        # Linux/macOSの場合の標準処理    
+        # Linux/macOSの場合の処理
+        return _write_iso_to_linux_device(iso_path, device_path, progress_callback)
+        
+    except Exception as e:
+        # エラーを通知
+        if progress_callback:
+            progress_callback(0, f"error: {str(e)}")
+        raise
+    
+    finally:
+        # 必要に応じてデバイスを安全に取り外す処理を追加できます
+        pass
+
+def _write_iso_to_linux_device(iso_path, device_path, progress_callback=None):
+    """Linux/macOS環境でISOファイルをデバイスに書き込む"""
+    try:
+        # デバイス準備（Linuxの場合はマウント解除が必要な場合がある）
+        if platform.system() == "Linux":
+            if progress_callback:
+                progress_callback(0, "preparing_disk")
+                
+            # デバイスがマウントされているか確認し、マウント解除を試みる
+            if not _ensure_device_not_mounted(device_path, progress_callback):
+                raise OSError(f"Failed to unmount device {device_path}")
+                
+            if progress_callback:
+                progress_callback(0, "disk_prepared")
+        
+        # ISOファイルを開く
         with open(iso_path, 'rb') as iso_file:
             # ISOファイルのサイズを取得
             iso_file.seek(0, os.SEEK_END)
             iso_size = iso_file.tell()
             iso_file.seek(0)
+            
+            if progress_callback:
+                progress_callback(0, "opening_device")
+                
+            # リトライに関する変数
+            max_retries = 10  # 最大リトライ回数
+            retry_delay = 2.0  # リトライ間隔（秒）
             
             with open(device_path, 'wb') as device:
                 buffer_size = 1024 * 1024  # 1MB
@@ -58,12 +93,37 @@ def write_iso_to_device(iso_path, device_path, progress_callback=None):
                 last_report_time = time.time()
                 report_interval = 0.5  # 進捗報告の間隔 (秒)
                 
+                if progress_callback:
+                    progress_callback(0, "writing")
+                
                 while True:
                     buffer = iso_file.read(buffer_size)
                     if not buffer:
                         break
+                    
+                    # 書き込み処理にリトライロジックを追加
+                    retry_count = 0
+                    write_success = False
+                    
+                    while retry_count <= max_retries and not write_success:
+                        if retry_count > 0:
+                            # リトライの場合は少し待機
+                            time.sleep(retry_delay)
+                            print(f"Retrying write operation (attempt {retry_count}/{max_retries})")
+                            if progress_callback:
+                                progress_callback(int(bytes_written * 100 / iso_size) if iso_size > 0 else 0,
+                                                f"writing (retry {retry_count}/{max_retries})")
                         
-                    device.write(buffer)
+                        try:
+                            # 書き込み処理
+                            device.write(buffer)
+                            write_success = True
+                        except (IOError, OSError) as e:
+                            print(f"Write error: {str(e)}")
+                            retry_count += 1
+                            if retry_count > max_retries:
+                                raise OSError(f"Write failed after {max_retries} retries: {str(e)}")
+                    
                     bytes_written += len(buffer)
                     print(f"Bytes written: {bytes_written}/{iso_size} ({bytes_written * 100 / iso_size:.2f}%)")
                     
@@ -75,8 +135,18 @@ def write_iso_to_device(iso_path, device_path, progress_callback=None):
                         last_report_time = current_time
                 
                 # 書き込みバッファをフラッシュ
+                if progress_callback:
+                    progress_callback(100, "flushing")  # 99%でフラッシュ中と表示
+                
                 device.flush()
                 os.fsync(device.fileno())
+                
+                if progress_callback:
+                    progress_callback(100, "syncing")  # ディスクキャッシュ同期
+                
+                # Linux環境ではsync呼び出しでディスクキャッシュを確実に同期
+                if platform.system() == "Linux":
+                    subprocess.run(["sync"], check=True)
         
         # 完了を通知
         if progress_callback:
@@ -89,10 +159,49 @@ def write_iso_to_device(iso_path, device_path, progress_callback=None):
         if progress_callback:
             progress_callback(0, f"error: {str(e)}")
         raise
+
+def _ensure_device_not_mounted(device_path, progress_callback=None):
+    """デバイスがマウントされていないことを確認（Linuxのみ）"""
+    if platform.system() != "Linux":
+        return True
     
-    finally:
-        # 必要に応じてデバイスを安全に取り外す処理を追加できます
-        pass
+    try:
+        # マウントポイントを確認
+        mount_output = subprocess.check_output(["mount"], universal_newlines=True)
+        mount_lines = mount_output.splitlines()
+        
+        # デバイスパーティションを取得（例: /dev/sdb -> /dev/sdb1, /dev/sdb2等）
+        device_base = os.path.basename(device_path)
+        mounted_partitions = []
+        
+        for line in mount_lines:
+            if device_base in line or device_path in line:
+                parts = line.split()
+                if len(parts) >= 1:
+                    mounted_partitions.append(parts[0])
+        
+        # マウントされているパーティションがある場合はアンマウント
+        if mounted_partitions:
+            if progress_callback:
+                progress_callback(0, "dismounting_volume")
+                
+            for partition in mounted_partitions:
+                print(f"Unmounting {partition}...")
+                subprocess.run(["umount", partition], check=False)
+                
+            # アンマウント後に再確認
+            time.sleep(1)
+            mount_output = subprocess.check_output(["mount"], universal_newlines=True)
+            for partition in mounted_partitions:
+                if partition in mount_output:
+                    print(f"Failed to unmount {partition}")
+                    return False
+        
+        return True
+        
+    except Exception as e:
+        print(f"Error ensuring device not mounted: {e}")
+        return False
 
 def _write_iso_to_windows_device(iso_path, device_path, progress_callback=None):
     """Windows環境でISOファイルをデバイスに書き込む"""
