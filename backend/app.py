@@ -109,6 +109,12 @@ def write_iso():
         if not os.path.exists(iso_path):
             return jsonify({"error": f"ISO file {iso_file} not found"}), 404
         
+        # Linux環境での連続書き込み対策: 前回の完了ステータスをクリアしてからスタート
+        if platform.system() == "Linux" and write_status.get("status") == "completed":
+            print("Clearing previous completed status before starting new write operation")
+            write_status = {"progress": 0, "status": "idle"}
+            time.sleep(1)  # 状態変更が確実に伝わるよう少し待機
+        
         # 書き込み状態をリセットし、書き込み中フラグを設定
         write_status = {"progress": 0, "status": "started"}
         is_writing_active = True
@@ -232,6 +238,9 @@ def reset_status():
             subprocess.run(["udevadm", "trigger"], check=False)
             subprocess.run(["udevadm", "settle"], check=False)
             print("USB subsystem refreshed with udevadm")
+            
+            # 確実に状態がクリアされたことを確認するため待機
+            time.sleep(1)
         except Exception as e:
             print(f"Warning: Failed to reset device state: {e}")
     
