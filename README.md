@@ -1,5 +1,7 @@
 # Yakeru-USB
 
+注：フロントエンドのAssets込みのリポジトリはlfsの制限が緩い[Azure Devops](https://dev.azure.com/gaplant555/Yakeru-USB/_git/Yakeru-USB)上にあります
+
 Yakeru-USBは、ISOイメージファイルをUSBメモリに簡単に書き込むためのアプリケーションです。Pythonバックエンド（REST API）とUnityフロントエンドで構成されており、直感的なUIで簡単にUSBメモリへの書き込みが行えます。
 
 ![アプリケーションイメージ](.github/app_screenshot.png)
