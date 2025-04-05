@@ -205,6 +205,21 @@ namespace YakeruUSB
                             int rawProgress = responseObj["progress"].Value<int>();
                             string status = responseObj["status"].Value<string>();
                             
+                            // Linux環境での連続書き込み時の問題対策 - ISOManagerの状態とサーバー状態を比較
+                            if (status == "completed" && 
+                                ISOManager.Instance != null && 
+                                !ISOManager.Instance.IsWriting)
+                            {
+                                // 既にISOManagerの書き込みフラグが下がっている場合は、
+                                // 前回の書き込みの完了通知と判断して無視する
+                                if (Application.platform == RuntimePlatform.LinuxEditor || 
+                                    Application.platform == RuntimePlatform.LinuxPlayer)
+                                {
+                                    Debug.Log("Ignoring completed status from previous write operation");
+                                    yield break;
+                                }
+                            }
+                            
                             // 初期状態で完了ステータスを無視する場合の条件を変更
                             // 起動直後のみ無視し、その後はすべての完了通知を処理する
                             if (_ignoreInitialUpdates && status == "completed" && Time.realtimeSinceStartup < 5.0f)

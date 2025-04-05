@@ -25,11 +25,15 @@ namespace YakeruUSB
         [SerializeField] private Transform isoListContent;
         [SerializeField] private GameObject isoListItemPrefab;
         [SerializeField] private TextMeshProUGUI selectedISOText;
+        [SerializeField] private TextMeshProUGUI emptyISOListText; // 空のISOリスト表示用のテキスト
+        [SerializeField] private string emptyISOListMessage = "ISOファイルがありません。\nbackend/isosフォルダにISOファイルを配置してください。";
 
         [Header("USBデバイスリスト")]
         [SerializeField] private Transform usbListContent;
         [SerializeField] private GameObject usbListItemPrefab;
         [SerializeField] private TextMeshProUGUI selectedUSBText;
+        [SerializeField] private TextMeshProUGUI emptyUSBListText; // 空のUSBリスト表示用のテキスト
+        [SerializeField] private string emptyUSBListMessage = "USBデバイスが見つかりません。\nUSBデバイスを接続して「更新」ボタンを押してください。";
 
         [Header("確認パネル")]
         [SerializeField] private TextMeshProUGUI confirmIsoNameText;
@@ -281,6 +285,18 @@ namespace YakeruUSB
             // UIが更新される時間を確保するため、1フレーム待機
             yield return null;
             
+            // Linux環境での連続書き込み時の問題対策
+            if (Application.platform == RuntimePlatform.LinuxEditor || 
+                Application.platform == RuntimePlatform.LinuxPlayer)
+            {
+                // 念のため少し余分に待機
+                yield return new WaitForSeconds(0.3f);
+                
+                // 強制的にバックエンドの状態をリセットしてから書き込み開始
+                yield return StartCoroutine(APIClient.Instance.ResetBackendStatus());
+                yield return new WaitForSeconds(0.5f);
+            }
+            
             // 書き込み開始
             ISOManager.Instance.StartWriting();
         }
@@ -462,47 +478,50 @@ namespace YakeruUSB
                 Destroy(child.gameObject);
             }
             
-            // ISOファイルがない場合のメッセージ
+            // ISOファイルがない場合のメッセージを表示
             if (isoFiles.Count == 0)
             {
-                GameObject emptyItem = new GameObject("EmptyMessage");
-                emptyItem.transform.SetParent(isoListContent, false);
-                
-                TextMeshProUGUI text = emptyItem.AddComponent<TextMeshProUGUI>();
-                text.text = "ISOファイルがありません。\nbackend/isosフォルダにISOファイルを配置してください。";
-                text.fontSize = 14;
-                text.alignment = TextAlignmentOptions.Center;
-                text.color = Color.white;
-                   
-                RectTransform rect = emptyItem.GetComponent<RectTransform>();
-                rect.sizeDelta = new Vector2(300, 60);
+                if (emptyISOListText != null)
+                {
+                    // 既存のテキストオブジェクトを表示し、メッセージを設定
+                    emptyISOListText.gameObject.SetActive(true);
+                    emptyISOListText.text = emptyISOListMessage;
+                }
             }
-            
-            // 各ISOファイルのリストアイテムを作成
-            foreach (var iso in isoFiles)
+            else
             {
-                GameObject item = Instantiate(isoListItemPrefab, isoListContent);
+                // ISOファイルがある場合は空メッセージを非表示
+                if (emptyISOListText != null)
+                {
+                    emptyISOListText.gameObject.SetActive(false);
+                }
                 
-                // レイアウト設定
-                ConfigureListItemLayout(item);
-                
-                // 項目のテキストを設定
-                TextMeshProUGUI isoNameText = item.transform.Find("NameText").GetComponent<TextMeshProUGUI>();
-                TextMeshProUGUI isoSizeText = item.transform.Find("SizeText").GetComponent<TextMeshProUGUI>();
-                
-                isoNameText.text = iso.name;
-                isoSizeText.text = iso.size_formatted;
-                
-                // 選択状態の初期設定
-                bool isSelected = ISOManager.Instance.SelectedISO != null && 
-                                 ISOManager.Instance.SelectedISO.name == iso.name;
-                item.GetComponent<Image>().color = isSelected ? 
-                    new Color(0.2f, 0.5f, 0.9f) : new Color(0.2f, 0.2f, 0.2f);
-                
-                // クリックイベントを設定
-                int index = isoFiles.IndexOf(iso); // ラムダでのキャプチャ用
-                Button button = item.GetComponent<Button>();
-                button.onClick.AddListener(() => OnISOItemClicked(iso, index));
+                // 各ISOファイルのリストアイテムを作成
+                foreach (var iso in isoFiles)
+                {
+                    GameObject item = Instantiate(isoListItemPrefab, isoListContent);
+                    
+                    // レイアウト設定
+                    ConfigureListItemLayout(item);
+                    
+                    // 項目のテキストを設定
+                    TextMeshProUGUI isoNameText = item.transform.Find("NameText").GetComponent<TextMeshProUGUI>();
+                    TextMeshProUGUI isoSizeText = item.transform.Find("SizeText").GetComponent<TextMeshProUGUI>();
+                    
+                    isoNameText.text = iso.name;
+                    isoSizeText.text = iso.size_formatted;
+                    
+                    // 選択状態の初期設定
+                    bool isSelected = ISOManager.Instance.SelectedISO != null && 
+                                     ISOManager.Instance.SelectedISO.name == iso.name;
+                    item.GetComponent<Image>().color = isSelected ? 
+                        new Color(0.2f, 0.5f, 0.9f) : new Color(0.2f, 0.2f, 0.2f);
+                    
+                    // クリックイベントを設定
+                    int index = isoFiles.IndexOf(iso); // ラムダでのキャプチャ用
+                    Button button = item.GetComponent<Button>();
+                    button.onClick.AddListener(() => OnISOItemClicked(iso, index));
+                }
             }
             
             // ISP選択画面が表示中なら選択状態を更新
@@ -520,47 +539,50 @@ namespace YakeruUSB
                 Destroy(child.gameObject);
             }
             
-            // USBデバイスがない場合のメッセージ
+            // USBデバイスがない場合のメッセージを表示
             if (usbDevices.Count == 0)
             {
-                GameObject emptyItem = new GameObject("EmptyMessage");
-                emptyItem.transform.SetParent(usbListContent, false);
-                
-                TextMeshProUGUI text = emptyItem.AddComponent<TextMeshProUGUI>();
-                text.text = "USBデバイスが見つかりません。\nUSBデバイスを接続して「更新」ボタンを押してください。";
-                text.fontSize = 14;
-                text.alignment = TextAlignmentOptions.Center;
-                text.color = Color.white;
-                   
-                RectTransform rect = emptyItem.GetComponent<RectTransform>();
-                rect.sizeDelta = new Vector2(300, 60);
+                if (emptyUSBListText != null)
+                {
+                    // 既存のテキストオブジェクトを表示し、メッセージを設定
+                    emptyUSBListText.gameObject.SetActive(true);
+                    emptyUSBListText.text = emptyUSBListMessage;
+                }
             }
-            
-            // 各USBデバイスのリストアイテムを作成
-            foreach (var device in usbDevices)
+            else
             {
-                GameObject item = Instantiate(usbListItemPrefab, usbListContent);
+                // USBデバイスがある場合は空メッセージを非表示
+                if (emptyUSBListText != null)
+                {
+                    emptyUSBListText.gameObject.SetActive(false);
+                }
                 
-                // レイアウト設定
-                ConfigureListItemLayout(item);
-                
-                // 項目のテキストを設定
-                TextMeshProUGUI deviceNameText = item.transform.Find("NameText").GetComponent<TextMeshProUGUI>();
-                TextMeshProUGUI deviceSizeText = item.transform.Find("SizeText").GetComponent<TextMeshProUGUI>();
-                
-                deviceNameText.text = device.name;
-                deviceSizeText.text = device.size;
-                
-                // 選択状態の初期設定
-                bool isSelected = ISOManager.Instance.SelectedDevice != null && 
-                                 ISOManager.Instance.SelectedDevice.id == device.id;
-                item.GetComponent<Image>().color = isSelected ? 
-                    new Color(0.2f, 0.5f, 0.9f) : new Color(0.2f, 0.2f, 0.2f);
-                
-                // クリックイベントを設定
-                int index = usbDevices.IndexOf(device); // ラムダでのキャプチャ用
-                Button button = item.GetComponent<Button>();
-                button.onClick.AddListener(() => OnUSBItemClicked(device, index));
+                // 各USBデバイスのリストアイテムを作成
+                foreach (var device in usbDevices)
+                {
+                    GameObject item = Instantiate(usbListItemPrefab, usbListContent);
+                    
+                    // レイアウト設定
+                    ConfigureListItemLayout(item);
+                    
+                    // 項目のテキストを設定
+                    TextMeshProUGUI deviceNameText = item.transform.Find("NameText").GetComponent<TextMeshProUGUI>();
+                    TextMeshProUGUI deviceSizeText = item.transform.Find("SizeText").GetComponent<TextMeshProUGUI>();
+                    
+                    deviceNameText.text = device.name;
+                    deviceSizeText.text = device.size;
+                    
+                    // 選択状態の初期設定
+                    bool isSelected = ISOManager.Instance.SelectedDevice != null && 
+                                     ISOManager.Instance.SelectedDevice.id == device.id;
+                    item.GetComponent<Image>().color = isSelected ? 
+                        new Color(0.2f, 0.5f, 0.9f) : new Color(0.2f, 0.2f, 0.2f);
+                    
+                    // クリックイベントを設定
+                    int index = usbDevices.IndexOf(device); // ラムダでのキャプチャ用
+                    Button button = item.GetComponent<Button>();
+                    button.onClick.AddListener(() => OnUSBItemClicked(device, index));
+                }
             }
             
             // USB選択画面が表示中なら選択状態を更新

@@ -308,11 +308,57 @@ namespace YakeruUSB
                 return;
             }
 
+            // Linux環境で連続書き込み時の問題を防止するため
+            // 前回のステータスをチェックして明示的にリセットが必要か判断
+            if (Application.platform == RuntimePlatform.LinuxEditor || 
+                Application.platform == RuntimePlatform.LinuxPlayer)
+            {
+                StartCoroutine(CheckAndResetStatusIfNeeded());
+            }
+            else
+            {
+                // 通常の書き込み開始
+                BeginWriteProcess();
+            }
+        }
+
+        // Linuxでの連続書き込み用に状態確認とリセットを行うコルーチン
+        private IEnumerator CheckAndResetStatusIfNeeded()
+        {
+            bool needsReset = false;
+            
+            // 現在のステータスを確認
+            yield return StartCoroutine(WebSocketClient.Instance.ForcePollStatus(
+                status => {
+                    // 完了ステータスが残っている場合はリセットが必要
+                    if (status.status == "completed")
+                    {
+                        Debug.Log("Detected completed status from previous write - resetting before starting new write");
+                        needsReset = true;
+                    }
+                }
+            ));
+            
+            if (needsReset)
+            {
+                // バックエンドの状態をリセット
+                yield return StartCoroutine(APIClient.Instance.ResetBackendStatus());
+                
+                // 少し待機して状態が確実に反映されるようにする
+                yield return new WaitForSeconds(1.0f);
+            }
+            
+            // リセット完了後（または不要な場合）書き込みを開始
+            BeginWriteProcess();
+        }
+
+        // 実際に書き込みプロセスを開始
+        private void BeginWriteProcess()
+        {
             // 書き込み開始前に定期更新を停止
             StopRefreshRoutine();
 
             // 書き込みフラグを先に設定し、OnWriteStartedを発火
-            // これにより「書き込み開始中」の状態をUIに伝える
             isWriting = true;
             OnWriteStarted?.Invoke();
             
@@ -320,7 +366,7 @@ namespace YakeruUSB
             WebSocketClient.Instance.ResetConnectionState();
             WebSocketClient.Instance.Connect();
 
-            // 書き込み開始前に、メディアのアンマウントを保証するオプションを追加
+            // 書き込み開始
             StartCoroutine(PrepareDeviceAndWrite());
         }
 
